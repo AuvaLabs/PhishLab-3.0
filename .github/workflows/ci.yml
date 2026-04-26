@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc
+
+      - name: Build
+        run: CGO_ENABLED=1 go build ./cmd/phishrig
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: Test (with race detector)
+        run: CGO_ENABLED=1 go test -race -coverprofile=coverage.out ./...
+
+      - name: Check coverage
+        run: |
+          total=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${total}%"
+          if [ "$(echo "$total < 50" | bc)" -eq 1 ]; then
+            echo "Coverage below 50% threshold"
+            exit 1
+          fi

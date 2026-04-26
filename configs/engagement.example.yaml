@@ -1,0 +1,67 @@
+# Evilginx-Lab Engagement Configuration
+# Copy this file to evilginx-lab.yaml and customize for your engagement
+
+engagement:
+  name: "Example Red Team Assessment"
+  client: "Acme Corp"
+  id: "ENG-2026-001"
+  start_date: "2026-03-01"
+  end_date: "2026-03-31"
+  operator: "operator@cyberonehq.com"
+  roe_reference: "path/to/signed-roe.pdf"
+  notes: "Authorized MFA bypass testing against O365 tenant"
+
+domain:
+  phishing: "login.example-corp.com"
+  redirect_url: "https://login.microsoftonline.com/"
+
+phishlet:
+  name: "o365"
+  hostname: "login.example-corp.com"
+  # Set to true to auto-enable on deploy
+  auto_enable: true
+
+evilginx:
+  install_dir: "/opt/evilginx2"
+  phishlets_dir: "/opt/evilginx2/phishlets"
+  # autocert uses Let's Encrypt for TLS
+  autocert: true
+
+gophish:
+  admin_url: "http://127.0.0.1:8800"
+  api_key: ""  # Set after first Gophish login
+
+smtp:
+  # Use "mailhog" for local testing or "external" for production
+  mode: "mailhog"
+  host: "localhost"
+  port: 1025
+  username: ""
+  password: ""
+  from_address: "noreply@example-corp.com"
+  from_name: "IT Security"
+  # TLS settings for external SMTP
+  tls: false
+  ignore_cert_errors: false
+
+targets:
+  - email: "user1@acme.com"
+    first_name: "John"
+    last_name: "Doe"
+    position: "CFO"
+  - email: "user2@acme.com"
+    first_name: "Jane"
+    last_name: "Smith"
+    position: "CTO"
+
+dashboard:
+  listen: "127.0.0.1:8443"
+  # TLS is handled by SSH tunnel; dashboard binds to localhost only
+
+store:
+  # SQLite database path for credential store and engagement data
+  path: "/var/lib/evilginx-lab/evilginx-lab.db"
+
+polling:
+  # How often to poll Evilginx bbolt DB for new sessions (seconds)
+  interval: 5

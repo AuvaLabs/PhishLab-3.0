@@ -1,0 +1,67 @@
+# PhishRig Engagement Configuration
+# Copy this file to phishrig.yaml and customize for your engagement
+
+engagement:
+  name: "CyberDefence Red Team Assessment"
+  client: "CyberDefence"
+  id: "ENG-2026-001"
+  start_date: "2026-04-24"
+  end_date: "2026-05-31"
+  operator: "nicholai.imbong@gmail.com"
+  roe_reference: "path/to/signed-roe.pdf"
+  notes: "Authorized MFA bypass testing"
+
+domain:
+  phishing: "secure.cyb3rdefence.com"
+  redirect_url: "https://login.microsoftonline.com/"
+
+phishlet:
+  name: "o365"
+  hostname: "secure.cyb3rdefence.com"
+  # Set to true to auto-enable on deploy
+  auto_enable: true
+
+evilginx:
+  install_dir: "/opt/evilginx2"
+  phishlets_dir: "/opt/evilginx2/phishlets"
+  # autocert uses Let's Encrypt for TLS
+  autocert: true
+
+gophish:
+  admin_url: "http://127.0.0.1:8800"
+  api_key: ""  # Set after first Gophish login
+
+smtp:
+  # Use "mailhog" for local testing or "external" for production
+  mode: "mailhog"
+  host: "localhost"
+  port: 1025
+  username: ""
+  password: ""
+  from_address: "noreply@cyb3rdefence.com"
+  from_name: "IT Security"
+  # TLS settings for external SMTP
+  tls: false
+  ignore_cert_errors: false
+
+targets:
+  - email: "user1@acme.com"
+    first_name: "John"
+    last_name: "Doe"
+    position: "CFO"
+  - email: "user2@acme.com"
+    first_name: "Jane"
+    last_name: "Smith"
+    position: "CTO"
+
+dashboard:
+  listen: "127.0.0.1:8443"
+  # TLS is handled by SSH tunnel; dashboard binds to localhost only
+
+store:
+  # SQLite database path for credential store and engagement data
+  path: "/var/lib/phishrig/phishrig.db"
+
+polling:
+  # How often to poll Evilginx bbolt DB for new sessions (seconds)
+  interval: 5

@@ -218,7 +218,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
 .topbar{display:flex;align-items:center;gap:16px;padding:0 24px;height:56px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
 .logo{display:flex;align-items:center;gap:10px}
-.logo-icon{width:30px;height:30px;background:linear-gradient(135deg,var(--cyan),#0055ff);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px}
+.logo-icon{width:32px;height:32px;border-radius:8px;display:block;flex-shrink:0;box-shadow:0 4px 12px rgba(0,212,255,.18),0 0 0 1px rgba(0,212,255,.25) inset}
 .logo-text{font-size:15px;font-weight:700;letter-spacing:-.3px}
 .tb-div{width:1px;height:24px;background:var(--border2)}
 .eng-name{font-size:13px;font-weight:500;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -378,7 +378,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <a class="skip-link" href="#main">Skip to main content</a>
 <header class="topbar" role="banner">
   <div class="logo">
-    <div class="logo-icon" aria-hidden="true">&#x1F41F;</div>
+    <svg class="logo-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="logobg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#00d4ff"/>
+          <stop offset="1" stop-color="#7c4dff"/>
+        </linearGradient>
+      </defs>
+      <rect width="64" height="64" rx="14" fill="url(#logobg)"/>
+      <path d="M 18 14 L 38 14 A 11 11 0 0 1 38 36 L 18 36" fill="none" stroke="#0a0c10" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M 18 14 L 18 46 Q 18 54 11 54 Q 5 54 5 47" fill="none" stroke="#0a0c10" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="5" cy="47" r="2.6" fill="#0a0c10"/>
+    </svg>
     <span class="logo-text">PhishLab</span>
   </div>
   <div class="tb-div" aria-hidden="true"></div>

@@ -165,6 +165,28 @@ func deployCmd() *cobra.Command {
 			}
 			defer db.Close()
 
+			// Idempotently upsert the engagement from yaml on every
+			// deploy. Previously required an explicit `init` run
+			// before `deploy`; running both in one go makes systemd
+			// restart sufficient to keep the engagement row in sync
+			// with the yaml so the dashboard always has an active
+			// engagement to scope captures to.
+			if err := db.UpsertEngagement(store.Engagement{
+				ID:           cfg.Engagement.ID,
+				Name:         cfg.Engagement.Name,
+				Client:       cfg.Engagement.Client,
+				Operator:     cfg.Engagement.Operator,
+				StartDate:    cfg.Engagement.StartDate,
+				EndDate:      cfg.Engagement.EndDate,
+				Domain:       cfg.Domain.Phishing,
+				PhishletName: cfg.Phishlet.Name,
+				RoEReference: cfg.Engagement.RoEReference,
+				Notes:        cfg.Engagement.Notes,
+				Status:       "active",
+			}); err != nil {
+				return fmt.Errorf("upserting engagement: %w", err)
+			}
+
 			// Start session poller
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

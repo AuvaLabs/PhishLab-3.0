@@ -164,11 +164,24 @@ func (db *DB) GetActiveEngagement() (*Engagement, error) {
 	return &e, nil
 }
 
-// InsertCredential stores a captured credential (idempotent by session_id)
+// InsertCredential stores a captured credential, upserting on
+// session_id so subsequent updates from the poller (e.g. cookies
+// captured after a Vulnerable->Exploitable transition) replace the
+// earlier row. created_at is preserved on update; captured_at and
+// the cred fields move to the latest values.
 func (db *DB) InsertCredential(c CapturedCredential) error {
 	_, err := db.conn.Exec(`
-		INSERT OR IGNORE INTO captured_credentials (engagement_id, session_id, phishlet, username, password, tokens_json, user_agent, remote_addr, captured_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO captured_credentials (engagement_id, session_id, phishlet, username, password, tokens_json, user_agent, remote_addr, captured_at, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET
+			engagement_id = excluded.engagement_id,
+			phishlet      = excluded.phishlet,
+			username      = excluded.username,
+			password      = excluded.password,
+			tokens_json   = excluded.tokens_json,
+			user_agent    = excluded.user_agent,
+			remote_addr   = excluded.remote_addr,
+			captured_at   = excluded.captured_at`,
 		c.EngagementID, c.SessionID, c.Phishlet, c.Username, c.Password,
 		c.TokensJSON, c.UserAgent, c.RemoteAddr, c.CapturedAt, time.Now(),
 	)

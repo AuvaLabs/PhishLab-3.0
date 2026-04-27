@@ -342,8 +342,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     </div>
     <div class="tpane" id="tab-campaigns" role="tabpanel" aria-labelledby="tab-btn-campaigns" hidden>
       <div class="tbar">
-        <button class="tbar-btn primary" type="button" onclick="openCampForm()">&#x2795; New Campaign</button>
-        <button class="tbar-btn" type="button" onclick="openGroupForm()">&#x2795; New Group</button>
+        <button class="tbar-btn primary" type="button" onclick="openCampForm()">&#x2795; Launch Campaign</button>
         <button class="tbar-btn" type="button" id="btn-sync" onclick="sync()">&#x21BB; Sync from Gophish</button>
       </div>
       <div style="overflow-x:auto">
@@ -569,6 +568,17 @@ function fillSelect(id,items,key){
   if(!items||!items.length){s.innerHTML='<option value="">(none — create one first)</option>';return;}
   items.forEach(function(it){var o=document.createElement('option');o.value=it[key];o.textContent=it[key];s.appendChild(o);});
 }
+var campRecipMode='paste';
+function setRecipMode(m){
+  campRecipMode=m;
+  document.getElementById('camp-recip-paste').style.display=m==='paste'?'block':'none';
+  document.getElementById('camp-recip-group').style.display=m==='group'?'block':'none';
+  ['camp-mode-paste','camp-mode-group'].forEach(function(id){
+    var b=document.getElementById(id); if(!b)return;
+    var on=id==='camp-mode-'+m;
+    b.classList.toggle('primary',on);
+  });
+}
 function openCampForm(){
   Promise.all([
     fetch('/api/templates').then(function(r){return r.json();}),
@@ -576,28 +586,69 @@ function openCampForm(){
     fetch('/api/profiles').then(function(r){return r.json();}),
     fetch('/api/pages').then(function(r){return r.json();})
   ]).then(function(arr){
-    fillSelect('camp-tmpl',arr[0]||[],'name');
-    fillSelect('camp-group',arr[1]||[],'name');
-    fillSelect('camp-smtp',arr[2]||[],'name');
-    fillSelect('camp-page',arr[3]||[],'name');
+    var tmpls=arr[0]||[], groups=(arr[1]||[]).filter(function(g){return !/^test\b/i.test(g.name);}), profiles=arr[2]||[], pages=arr[3]||[];
+    fillSelect('camp-tmpl',tmpls,'name');
+    fillSelect('camp-group',groups,'name');
+    fillSelect('camp-smtp',profiles,'name');
+    fillSelect('camp-page',pages,'name');
+    var hint=document.getElementById('camp-tmpl-hint');
+    if(!tmpls.length){hint.innerHTML='<span style="color:var(--amber)">No templates found.</span> Create one on the Templates tab before launching.';}
+    else hint.textContent='';
+    if(!profiles.length){alert('No sending profile is configured. Add SMTP credentials in Gophish first.');}
+    setRecipMode('paste');
     showModal('modal-camp');
   });
 }
+function parsePastedRecipients(raw){
+  return raw.split('\n').map(function(line){
+    line=line.trim(); if(!line)return null;
+    var p=line.split(',').map(function(s){return s.trim();});
+    if(!p[0]||p[0].indexOf('@')<0)return null;
+    return {email:p[0],first_name:p[1]||'',last_name:p[2]||'',position:p[3]||''};
+  }).filter(Boolean);
+}
 function submitCamp(){
-  var body={
-    name:document.getElementById('camp-name').value,
-    template:{name:document.getElementById('camp-tmpl').value},
-    page:{name:document.getElementById('camp-page').value},
-    smtp:{name:document.getElementById('camp-smtp').value},
-    groups:[{name:document.getElementById('camp-group').value}],
-    url:document.getElementById('camp-url').value,
-    launch_date:new Date().toISOString()
-  };
-  if(!body.name||!body.template.name||!body.groups[0].name||!body.smtp.name||!body.page.name||!body.url){alert('All fields required');return;}
-  fetch('/api/campaigns',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-    .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
-    .then(function(){hideModal('modal-camp');load();})
-    .catch(function(e){alert('Create failed: '+e.message);});
+  var name=document.getElementById('camp-name').value.trim();
+  if(!name){
+    var ts=new Date().toISOString().replace(/[:T]/g,'-').slice(0,16);
+    name='Campaign '+ts;
+  }
+  var tmpl=document.getElementById('camp-tmpl').value;
+  var smtp=document.getElementById('camp-smtp').value;
+  var page=document.getElementById('camp-page').value;
+  var url=document.getElementById('camp-url').value.trim();
+  if(!tmpl||!smtp||!page||!url){alert('Template, sending profile, landing page, and lure URL are required.');return;}
+
+  // Resolve recipients to a Gophish group
+  var groupPromise;
+  if(campRecipMode==='group'){
+    var g=document.getElementById('camp-group').value;
+    if(!g){alert('Select a group, or switch to "Paste emails".');return;}
+    groupPromise=Promise.resolve(g);
+  } else {
+    var raw=document.getElementById('camp-emails').value;
+    var targets=parsePastedRecipients(raw);
+    if(!targets.length){alert('Paste at least one email address.');return;}
+    var groupName=name+' (recipients)';
+    groupPromise=fetch('/api/groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:groupName,targets:targets})})
+      .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error('group: '+(j.error||'HTTP '+r.status));});return r.json();})
+      .then(function(){return groupName;});
+  }
+  groupPromise.then(function(groupName){
+    var body={
+      name:name,
+      template:{name:tmpl},
+      page:{name:page},
+      smtp:{name:smtp},
+      groups:[{name:groupName}],
+      url:url,
+      launch_date:new Date().toISOString()
+    };
+    return fetch('/api/campaigns',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  }).then(function(r){
+    if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});
+    return r.json();
+  }).then(function(){hideModal('modal-camp');load();}).catch(function(e){alert('Launch failed: '+e.message);});
 }
 function openGroupForm(){showModal('modal-group');}
 function submitGroup(){
@@ -687,18 +738,34 @@ initChart();load();loadLures();setInterval(load,15000);setInterval(loadLures,300
 </script>
 <div class="modal" id="modal-camp" role="dialog" aria-modal="true" aria-labelledby="modal-camp-h">
   <div class="modal-card">
-    <div class="modal-h"><h3 id="modal-camp-h">New Campaign</h3><button class="modal-x" type="button" onclick="hideModal('modal-camp')" aria-label="Close">&times;</button></div>
+    <div class="modal-h"><h3 id="modal-camp-h">Launch Campaign</h3><button class="modal-x" type="button" onclick="hideModal('modal-camp')" aria-label="Close">&times;</button></div>
     <div class="modal-b">
-      <div class="fld"><label for="camp-name">Campaign name</label><input id="camp-name" type="text" placeholder="e.g. M365 Verification - 2026-04-30"></div>
-      <div class="fld"><label for="camp-tmpl">Email template</label><select id="camp-tmpl"></select></div>
-      <div class="fld"><label for="camp-page">Landing page</label><select id="camp-page"></select></div>
-      <div class="fld"><label for="camp-smtp">Sending profile</label><select id="camp-smtp"></select></div>
-      <div class="fld"><label for="camp-group">Target group</label><select id="camp-group"></select></div>
-      <div class="fld"><label for="camp-url">Phish URL (lure)</label><input id="camp-url" type="url" placeholder="https://login.cyb3rdefence.com/abcdEFGH"><div class="hint">Where {{.URL}} resolves to in the email. Append the lure path generated by evilginx.</div></div>
+      <div class="fld"><label for="camp-name">Campaign name</label><input id="camp-name" type="text" placeholder="auto-generated if blank"><div class="hint">Defaults to the engagement id + timestamp.</div></div>
+
+      <div class="fld">
+        <label>Recipients</label>
+        <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+          <button type="button" class="tbar-btn" id="camp-mode-paste" onclick="setRecipMode('paste')">Paste emails</button>
+          <button type="button" class="tbar-btn" id="camp-mode-group" onclick="setRecipMode('group')">Use existing group</button>
+        </div>
+        <div id="camp-recip-paste"><textarea id="camp-emails" placeholder="alice@target.com,Alice,Smith,Engineer&#10;bob@target.com,Bob,Jones,IT Manager&#10;&#10;Or just one email per line:&#10;charlie@target.com"></textarea><div class="hint">One per line. Format: <code>email,first,last,position</code> (only email is required).</div></div>
+        <div id="camp-recip-group" style="display:none"><select id="camp-group"></select><div class="hint">Re-uses an existing Gophish group.</div></div>
+      </div>
+
+      <div class="fld"><label for="camp-tmpl">Email template</label><select id="camp-tmpl"></select><div class="hint" id="camp-tmpl-hint">Don't see a template? Create one on the Templates tab first.</div></div>
+
+      <div class="fld"><label for="camp-url">Phish URL (lure)</label><input id="camp-url" type="url" placeholder="https://login.cyb3rdefence.com/abcdEFGH"><div class="hint">Click "Use in Campaign" on a lure row above to auto-fill.</div></div>
+
+      <details style="margin-top:14px"><summary style="cursor:pointer;font-size:12px;color:var(--muted);user-select:none">Advanced (sender / landing page)</summary>
+        <div style="margin-top:10px">
+          <div class="fld"><label for="camp-smtp">Sending profile (sender)</label><select id="camp-smtp"></select></div>
+          <div class="fld"><label for="camp-page">Gophish landing page</label><select id="camp-page"></select><div class="hint">Usually doesn't matter for evilginx — clicks go directly to the lure URL.</div></div>
+        </div>
+      </details>
     </div>
     <div class="modal-f">
       <button class="tbar-btn" type="button" onclick="hideModal('modal-camp')">Cancel</button>
-      <button class="tbar-btn primary" type="button" onclick="submitCamp()">Launch</button>
+      <button class="tbar-btn primary" type="button" onclick="submitCamp()">Launch &amp; Send</button>
     </div>
   </div>
 </div>

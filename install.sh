@@ -63,7 +63,7 @@ MAILHOG_UI_PORT=8025
 MAILHOG_SMTP_PORT=1025
 DASHBOARD_PORT=9000
 GOPHISH_VERSION="0.12.1"
-GO_VERSION="1.22.3"
+GO_VERSION="1.25.9"
 EVILGINX_DIR="/opt/evilginx2"
 EVILGINX_STATE="$EVILGINX_DIR/state"
 PHISHLETS_PATH="$EVILGINX_DIR/phishlets"
@@ -300,6 +300,41 @@ EOF
 # in its new state-dir location.
 ln -sfn "$EVILGINX_STATE/data.db" "$EVILGINX_DIR/data.db" || true
 
+# OAuth env file + allowlist bootstrap. Default values keep OAuth disabled
+# (the dashboard's middleware is a no-op when CLIENT_ID is empty), so a fresh
+# install still works behind the nginx basic-auth gate. To enable Google
+# sign-in: fill in CLIENT_ID/SECRET + ALLOWED_EMAILS, then `systemctl restart
+# evilginx-lab` and remove the `auth_basic` directive from the dashboard
+# nginx vhost (see /etc/nginx/sites-available/phishlab-ops).
+mkdir -p /etc/evilginx-lab
+if [ ! -f /etc/evilginx-lab/oauth.env ]; then
+  cat <<OAUTHENV > /etc/evilginx-lab/oauth.env
+# Google OAuth config for the evilginx-lab dashboard.
+# Steps to enable:
+#   1. Create OAuth 2.0 Client ID at https://console.cloud.google.com/apis/credentials
+#      Application type: Web application
+#      Authorized redirect URI: https://dashboard.${APEX}:8443/auth/google/callback
+#   2. Paste client_id and client_secret below.
+#   3. Add yourself to GOOGLE_OAUTH_ALLOWED_EMAILS (or your domain to ALLOWED_DOMAINS).
+#   4. systemctl restart evilginx-lab
+#   5. Remove auth_basic from /etc/nginx/sites-available/phishlab-ops (dashboard vhost) and reload nginx.
+GOOGLE_OAUTH_CLIENT_ID=
+GOOGLE_OAUTH_CLIENT_SECRET=
+GOOGLE_OAUTH_REDIRECT_URL=https://dashboard.${APEX}:8443/auth/google/callback
+GOOGLE_OAUTH_ALLOWED_EMAILS=
+GOOGLE_OAUTH_ALLOWED_DOMAINS=
+SESSION_COOKIE_SECRET=$(openssl rand -hex 32)
+OAUTH_ALLOWLIST_FILE=/etc/evilginx-lab/allowlist.json
+OAUTHENV
+  chmod 0600 /etc/evilginx-lab/oauth.env
+fi
+
+# allowlist.json holds the runtime-editable user list managed by the
+# Users modal in the dashboard. Pre-create empty so first add doesn't
+# need to mkdir or guess permissions.
+[ -f /etc/evilginx-lab/allowlist.json ] || echo '{"emails":[],"domains":[]}' > /etc/evilginx-lab/allowlist.json
+chmod 0600 /etc/evilginx-lab/allowlist.json
+
 cat <<EOF > /etc/systemd/system/evilginx-lab.service
 [Unit]
 Description=Evilginx-Lab Dashboard
@@ -309,6 +344,7 @@ After=network.target evilginx.service gophish.service
 Type=simple
 User=root
 WorkingDirectory=$LABDIR
+EnvironmentFile=-/etc/evilginx-lab/oauth.env
 ExecStart=/usr/local/bin/evilginx-lab deploy -c $LABDIR/evilginx-lab.yaml
 Restart=always
 RestartSec=5
@@ -494,6 +530,14 @@ echo "Dashboard:    http://127.0.0.1:$DASHBOARD_PORT"
 echo "  SSH tunnel: ssh -L $DASHBOARD_PORT:127.0.0.1:$DASHBOARD_PORT root@$PUBLIC_IP"
 if "$WITH_OPS_PANEL"; then
 echo "  Ops panel:  https://dashboard.$APEX:8443  (basic auth: $OP_USER)"
+echo ""
+echo "  To switch from basic auth to Google OAuth login:"
+echo "    1. Create OAuth 2.0 Client ID in Google Cloud Console"
+echo "       Redirect URI: https://dashboard.$APEX:8443/auth/google/callback"
+echo "    2. Edit /etc/evilginx-lab/oauth.env with the client id + secret + allowlist"
+echo "    3. systemctl restart evilginx-lab"
+echo "    4. Remove auth_basic from /etc/nginx/sites-available/phishlab-ops (dashboard vhost) and reload nginx"
+echo "    5. Add additional users from the dashboard topbar Users button"
 fi
 echo ""
 echo "Quick Start:"

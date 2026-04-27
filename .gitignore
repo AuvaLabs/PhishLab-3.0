@@ -6,7 +6,6 @@
 
 # Build artifacts
 dist/
-go.sum
 
 # Engagement configs (may contain secrets)
 /evilginx-lab.yaml

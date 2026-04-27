@@ -78,7 +78,7 @@ const dashboardHTML = `<!DOCTYPE html>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2300d4ff'/%3E%3Ctext x='50%25' y='56%25' text-anchor='middle' font-family='Arial' font-size='38' font-weight='700' fill='%230d0d11'%3EP%3C/text%3E%3C/svg%3E">
 <script
   src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
-  integrity="sha384-fnbX44GdY9gNN8L17Y2bW+T0tc/0Cmv4dXyNhDmw6T0HYlc0z5UIQGqEzlkdLwQM"
+  integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
   crossorigin="anonymous"
   referrerpolicy="no-referrer"></script>
 <style>

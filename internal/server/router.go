@@ -1,7 +1,9 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/AuvaLabs/PhishLab-3.0/internal/auth"
 	"github.com/AuvaLabs/PhishLab-3.0/internal/server/handlers"
@@ -48,6 +50,33 @@ func NewRouter(api *handlers.APIHandler, authH *auth.Handler) http.Handler {
 		r.HandleFunc("/auth/google/login", authH.Login).Methods("GET")
 		r.HandleFunc("/auth/google/callback", authH.Callback).Methods("GET")
 		r.HandleFunc("/auth/logout", authH.Logout).Methods("GET", "POST")
+
+		apiRouter.HandleFunc("/users", func(w http.ResponseWriter, req *http.Request) {
+			emails, domains := authH.ListAllowed()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"emails": emails, "domains": domains})
+		}).Methods("GET")
+		apiRouter.HandleFunc("/users", func(w http.ResponseWriter, req *http.Request) {
+			var body struct{ Entry string `json:"entry"` }
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil || strings.TrimSpace(body.Entry) == "" {
+				http.Error(w, `{"error":"entry required"}`, http.StatusBadRequest)
+				return
+			}
+			if err := authH.AddAllowed(body.Entry); err != nil {
+				http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		}).Methods("POST")
+		apiRouter.HandleFunc("/users/{entry}", func(w http.ResponseWriter, req *http.Request) {
+			vars := mux.Vars(req)
+			if err := authH.RemoveAllowed(vars["entry"]); err != nil {
+				http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		}).Methods("DELETE")
 	}
 
 	r.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -321,6 +350,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <span style="font-size:11px;color:var(--muted2)">Phishing entry URLs &mdash; paste into Gophish "Phish URL" field</span>
     </div>
     <div id="lures-list"><div class="lbl">Loading&#x2026;</div></div>
+  </section>
+  <section class="engcard" aria-label="Dashboard users">
+    <div class="engcard-h">
+      <h3>Dashboard Users</h3>
+      <span style="font-size:11px;color:var(--muted2)">Who can sign in via Google OAuth</span>
+    </div>
+    <div id="users-list"><div class="lbl">Loading&#x2026;</div></div>
+    <form onsubmit="addUser(event)" style="display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap">
+      <input type="text" id="user-entry" placeholder="user@example.com  OR  example.com (whole domain)" style="flex:1;min-width:240px;padding:8px 12px;background:var(--bg);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:13px;font-family:inherit">
+      <button class="tbar-btn primary" type="submit">&#x2795; Add User</button>
+    </form>
+    <div style="margin-top:6px;font-size:11px;color:var(--muted2)">Email: only that single user. Domain: anyone with that Workspace domain. Both formats accepted.</div>
   </section>
   <section class="tabs-wrap" aria-label="Engagement detail tabs">
     <div class="tabs-hdr" role="tablist" aria-label="Engagement views">
@@ -684,6 +725,37 @@ function submitEng(){
     .then(function(){hideModal('modal-eng');load();})
     .catch(function(e){alert('Save failed: '+e.message);});
 }
+function loadUsers(){
+  fetch('/api/users').then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(d){
+    var box=document.getElementById('users-list');if(!box)return;
+    var rows=[];
+    (d.emails||[]).forEach(function(e){rows.push({val:e,kind:'email'});});
+    (d.domains||[]).forEach(function(e){rows.push({val:e,kind:'domain'});});
+    if(!rows.length){box.innerHTML='<div class="lbl">No users yet — add one below.</div>';return;}
+    box.innerHTML=rows.map(function(r){
+      var kindBadge=r.kind==='email'?'<span class="lure-ph">User</span>':'<span class="lure-ph" style="color:var(--purple);background:var(--purple-dim);border-color:rgba(179,136,255,.3)">Domain</span>';
+      return '<div class="lurerow">'+kindBadge+'<span class="lure-url" title="'+esc(r.val)+'">'+esc(r.val)+'</span><button class="copybtn" type="button" onclick="removeUser(\''+esc(r.val).replace(/\x27/g,"\\x27")+'\')">Remove</button></div>';
+    }).join('');
+  }).catch(function(){
+    var box=document.getElementById('users-list');if(box)box.innerHTML='<div class="lbl" style="color:var(--amber)">Failed to load users (OAuth may be disabled).</div>';
+  });
+}
+function addUser(ev){
+  ev.preventDefault();
+  var v=document.getElementById('user-entry').value.trim();
+  if(!v){return false;}
+  fetch('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({entry:v})})
+    .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
+    .then(function(){document.getElementById('user-entry').value='';loadUsers();})
+    .catch(function(e){alert('Add failed: '+e.message);});
+  return false;
+}
+function removeUser(entry){
+  if(!confirm('Remove '+entry+' from the dashboard allowlist?'))return;
+  fetch('/api/users/'+encodeURIComponent(entry),{method:'DELETE'})
+    .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
+    .then(loadUsers).catch(function(e){alert('Remove failed: '+e.message);});
+}
 function loadLures(){
   fetch('/api/lures').then(function(r){return r.json();}).then(function(arr){
     var box=document.getElementById('lures-list');if(!box)return;
@@ -734,7 +806,7 @@ function renderEng(eng){
   }).join('');
 }
 
-initChart();load();loadLures();setInterval(load,15000);setInterval(loadLures,30000);connectWS();
+initChart();load();loadLures();loadUsers();setInterval(load,15000);setInterval(loadLures,30000);connectWS();
 </script>
 <div class="modal" id="modal-camp" role="dialog" aria-modal="true" aria-labelledby="modal-camp-h">
   <div class="modal-card">

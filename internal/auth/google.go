@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -33,18 +34,32 @@ type Config struct {
 	SessionSecret  []byte
 	SessionTTL     time.Duration
 	CookieSecure   bool
+	// AllowlistFile is the JSON file backing the runtime-editable
+	// allowlist. Bootstrap entries from env vars are merged with
+	// it; runtime add/remove ops persist here. Default:
+	// /etc/evilginx-lab/allowlist.json
+	AllowlistFile string
 }
 
 // Handler exposes the OAuth login/callback/logout HTTP handlers and a
 // gating middleware. Construct with NewHandler.
 type Handler struct {
-	cfg   Config
-	oauth *oauth2.Config
+	cfg            Config
+	oauth          *oauth2.Config
+	mu             sync.RWMutex
+	runtimeEmails  []string
+	runtimeDomains []string
 }
 
-// NewHandler builds a Handler from a Config.
+type allowlistFile struct {
+	Emails  []string `json:"emails"`
+	Domains []string `json:"domains"`
+}
+
+// NewHandler builds a Handler from a Config and seeds the runtime
+// allowlist from env config + on-disk allowlist file (if any).
 func NewHandler(cfg Config) *Handler {
-	return &Handler{
+	h := &Handler{
 		cfg: cfg,
 		oauth: &oauth2.Config{
 			ClientID:     cfg.ClientID,
@@ -54,6 +69,107 @@ func NewHandler(cfg Config) *Handler {
 			Endpoint:     google.Endpoint,
 		},
 	}
+	h.runtimeEmails = mergeUnique(nil, cfg.AllowedEmails)
+	h.runtimeDomains = mergeUnique(nil, cfg.AllowedDomains)
+	if cfg.AllowlistFile != "" {
+		if data, err := os.ReadFile(cfg.AllowlistFile); err == nil {
+			var f allowlistFile
+			if err := json.Unmarshal(data, &f); err == nil {
+				h.runtimeEmails = mergeUnique(h.runtimeEmails, f.Emails)
+				h.runtimeDomains = mergeUnique(h.runtimeDomains, f.Domains)
+			}
+		}
+	}
+	return h
+}
+
+func mergeUnique(a, b []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(a)+len(b))
+	for _, list := range [][]string{a, b} {
+		for _, v := range list {
+			v = strings.ToLower(strings.TrimSpace(v))
+			if v == "" {
+				continue
+			}
+			if _, ok := seen[v]; ok {
+				continue
+			}
+			seen[v] = struct{}{}
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// ListAllowed returns the current allowlist (env + runtime additions).
+func (h *Handler) ListAllowed() ([]string, []string) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	emails := append([]string(nil), h.runtimeEmails...)
+	domains := append([]string(nil), h.runtimeDomains...)
+	return emails, domains
+}
+
+// AddAllowed adds an email or domain to the runtime allowlist and
+// persists it. An entry containing "@" is treated as an email;
+// otherwise as a domain.
+func (h *Handler) AddAllowed(entry string) error {
+	entry = strings.ToLower(strings.TrimSpace(entry))
+	if entry == "" {
+		return errors.New("empty entry")
+	}
+	h.mu.Lock()
+	if strings.Contains(entry, "@") {
+		h.runtimeEmails = mergeUnique(h.runtimeEmails, []string{entry})
+	} else {
+		h.runtimeDomains = mergeUnique(h.runtimeDomains, []string{entry})
+	}
+	h.mu.Unlock()
+	return h.persist()
+}
+
+// RemoveAllowed removes an email or domain from the runtime allowlist.
+// Bootstrap entries from env config are also removable at runtime;
+// they will return on next process restart unless the env config is
+// also updated.
+func (h *Handler) RemoveAllowed(entry string) error {
+	entry = strings.ToLower(strings.TrimSpace(entry))
+	if entry == "" {
+		return errors.New("empty entry")
+	}
+	h.mu.Lock()
+	if strings.Contains(entry, "@") {
+		h.runtimeEmails = removeFrom(h.runtimeEmails, entry)
+	} else {
+		h.runtimeDomains = removeFrom(h.runtimeDomains, entry)
+	}
+	h.mu.Unlock()
+	return h.persist()
+}
+
+func removeFrom(list []string, target string) []string {
+	out := make([]string, 0, len(list))
+	for _, v := range list {
+		if !strings.EqualFold(v, target) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func (h *Handler) persist() error {
+	if h.cfg.AllowlistFile == "" {
+		return nil
+	}
+	h.mu.RLock()
+	body, _ := json.MarshalIndent(allowlistFile{Emails: h.runtimeEmails, Domains: h.runtimeDomains}, "", "  ")
+	h.mu.RUnlock()
+	tmp := h.cfg.AllowlistFile + ".tmp"
+	if err := os.WriteFile(tmp, body, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, h.cfg.AllowlistFile)
 }
 
 // Enabled reports whether OAuth is configured. If false the
@@ -207,14 +323,16 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 
 func (h *Handler) allow(email string) bool {
 	email = strings.ToLower(strings.TrimSpace(email))
-	for _, e := range h.cfg.AllowedEmails {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, e := range h.runtimeEmails {
 		if strings.EqualFold(e, email) {
 			return true
 		}
 	}
 	if at := strings.LastIndex(email, "@"); at >= 0 {
 		domain := email[at+1:]
-		for _, d := range h.cfg.AllowedDomains {
+		for _, d := range h.runtimeDomains {
 			if strings.EqualFold(d, domain) {
 				return true
 			}
@@ -274,6 +392,10 @@ func LoadConfigFromEnv() Config {
 	if len(secret) < 16 {
 		secret, _ = randBytes(32)
 	}
+	allowlistFile := os.Getenv("OAUTH_ALLOWLIST_FILE")
+	if allowlistFile == "" {
+		allowlistFile = "/etc/evilginx-lab/allowlist.json"
+	}
 	return Config{
 		ClientID:       os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
 		ClientSecret:   os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
@@ -283,6 +405,7 @@ func LoadConfigFromEnv() Config {
 		SessionSecret:  secret,
 		SessionTTL:     8 * time.Hour,
 		CookieSecure:   true,
+		AllowlistFile:  allowlistFile,
 	}
 }
 

@@ -3,12 +3,96 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/AuvaLabs/PhishLab-3.0/internal/gophish"
 	"github.com/AuvaLabs/PhishLab-3.0/internal/store"
 	"github.com/gorilla/mux"
 )
+
+// landingSubdomain maps a phishlet name to the subdomain its lure
+// landing page is served on. Sourced from the upstream phishlets'
+// is_landing proxy_hosts entries; kept as a lookup table to avoid
+// reading and parsing every phishlet YAML on each /api/lures call.
+var landingSubdomain = map[string]string{
+	"o365":                "login",
+	"microsoft-o365-adfs": "login",
+	"microsoft-live":      "login",
+	"google":              "accounts",
+	"github":              "github",
+	"linkedin":            "www",
+	"twitter":             "twitter",
+	"facebook":            "www",
+	"instagram":           "www",
+	"okta":                "login",
+}
+
+// LureView is the dashboard-facing summary of an Evilginx lure.
+type LureView struct {
+	Phishlet string `json:"phishlet"`
+	Path     string `json:"path"`
+	URL      string `json:"url"`
+	Paused   int    `json:"paused"`
+	Info     string `json:"info"`
+}
+
+// HandleGetLures reads the live Evilginx config and returns the
+// list of currently-configured lures with their full landing URLs
+// so the operator can copy/paste straight from the dashboard.
+func (h *APIHandler) HandleGetLures(w http.ResponseWriter, r *http.Request) {
+	const cfgPath = "/opt/evilginx2/state/config.json"
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		writeJSON(w, http.StatusOK, []LureView{})
+		return
+	}
+	var cfg struct {
+		General struct {
+			Domain string `json:"domain"`
+		} `json:"general"`
+		Phishlets map[string]struct {
+			Hostname string `json:"hostname"`
+			Enabled  bool   `json:"enabled"`
+		} `json:"phishlets"`
+		Lures []struct {
+			Hostname string `json:"hostname"`
+			Path     string `json:"path"`
+			Phishlet string `json:"phishlet"`
+			Paused   int    `json:"paused"`
+			Info     string `json:"info"`
+		} `json:"lures"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, "parse evilginx config: "+err.Error())
+		return
+	}
+	out := make([]LureView, 0, len(cfg.Lures))
+	for _, l := range cfg.Lures {
+		host := l.Hostname
+		if host == "" {
+			ph, ok := cfg.Phishlets[l.Phishlet]
+			if ok && ph.Hostname != "" {
+				host = ph.Hostname
+			} else {
+				host = cfg.General.Domain
+			}
+		}
+		sub := landingSubdomain[l.Phishlet]
+		landing := host
+		if sub != "" {
+			landing = sub + "." + host
+		}
+		out = append(out, LureView{
+			Phishlet: l.Phishlet,
+			Path:     l.Path,
+			URL:      "https://" + landing + l.Path,
+			Paused:   l.Paused,
+			Info:     l.Info,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
 
 // HandleGetGroups proxies the Gophish groups list to the dashboard.
 func (h *APIHandler) HandleGetGroups(w http.ResponseWriter, r *http.Request) {

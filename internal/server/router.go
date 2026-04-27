@@ -38,6 +38,7 @@ func NewRouter(api *handlers.APIHandler, authH *auth.Handler) http.Handler {
 	apiRouter.HandleFunc("/profiles", api.HandleGetSendingProfiles).Methods("GET")
 	apiRouter.HandleFunc("/pages", api.HandleGetPages).Methods("GET")
 	apiRouter.HandleFunc("/campaigns/{id:[0-9]+}", api.HandleGetCampaignDetail).Methods("GET")
+	apiRouter.HandleFunc("/lures", api.HandleGetLures).Methods("GET")
 
 	// Stage 5 — engagement metadata editable in dashboard
 	apiRouter.HandleFunc("/engagement", api.HandleUpdateEngagement).Methods("PUT", "POST")
@@ -235,6 +236,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .engcard-grid .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:3px}
 .engcard-grid .val{font-size:13px;color:var(--text);font-weight:500}
 .engcard-grid .val.dim{color:var(--muted2);font-style:italic}
+.lurerow{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg);border:1px solid var(--border2);border-radius:6px;margin-bottom:8px;flex-wrap:wrap}
+.lurerow:last-child{margin-bottom:0}
+.lure-ph{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--cyan);background:var(--cyan-dim);padding:3px 8px;border-radius:4px;border:1px solid rgba(0,212,255,.3)}
+.lure-url{flex:1;font-family:'SF Mono',monospace;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.lure-paused{font-size:10px;color:var(--amber);background:var(--amber-dim);padding:2px 6px;border-radius:3px;border:1px solid rgba(255,179,0,.3)}
+.copybtn{background:transparent;border:1px solid var(--border2);color:var(--cyan);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap}
+.copybtn:hover,.copybtn:focus-visible{background:var(--cyan-dim);border-color:var(--cyan)}
+.copybtn.ok{background:var(--green-dim);color:var(--green);border-color:rgba(0,230,118,.4)}
 .empty{text-align:center;padding:48px 20px;color:var(--muted);font-size:13px}
 .empty-ico{font-size:32px;margin-bottom:12px;opacity:.35}
 .btn-del{padding:3px 10px;background:var(--red-dim);border:1px solid rgba(255,23,68,.3);color:var(--red);border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit}
@@ -297,11 +306,21 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <section class="engcard" aria-label="Engagement metadata">
     <div class="engcard-h">
       <h3>Engagement</h3>
-      <button class="tbar-btn" type="button" onclick="openEngForm()">&#x270F; Edit</button>
+      <div style="display:flex;gap:8px">
+        <button class="tbar-btn" type="button" onclick="openEngForm()">&#x270F; Edit / New</button>
+      </div>
     </div>
     <div class="engcard-grid" id="eng-grid">
       <div><div class="lbl">Loading&#x2026;</div></div>
     </div>
+    <div style="margin-top:8px;font-size:11px;color:var(--muted2)">Tip: change the Engagement ID in the form to create a new engagement record.</div>
+  </section>
+  <section class="engcard" aria-label="Active phishing lures">
+    <div class="engcard-h">
+      <h3>Active Lures</h3>
+      <span style="font-size:11px;color:var(--muted2)">Phishing entry URLs &mdash; paste into Gophish "Phish URL" field</span>
+    </div>
+    <div id="lures-list"><div class="lbl">Loading&#x2026;</div></div>
   </section>
   <section class="tabs-wrap" aria-label="Engagement detail tabs">
     <div class="tabs-hdr" role="tablist" aria-label="Engagement views">
@@ -614,6 +633,39 @@ function submitEng(){
     .then(function(){hideModal('modal-eng');load();})
     .catch(function(e){alert('Save failed: '+e.message);});
 }
+function loadLures(){
+  fetch('/api/lures').then(function(r){return r.json();}).then(function(arr){
+    var box=document.getElementById('lures-list');if(!box)return;
+    if(!arr||!arr.length){box.innerHTML='<div class="lbl">No lures configured. Run <code>lures create &lt;phishlet&gt;</code> on the PhishLab host.</div>';return;}
+    box.innerHTML=arr.map(function(l,i){
+      var paused=l.paused?'<span class="lure-paused">Paused</span>':'';
+      return '<div class="lurerow">'
+        +'<span class="lure-ph">'+esc(l.phishlet)+'</span>'
+        +'<span class="lure-url" title="'+esc(l.url)+'">'+esc(l.url)+'</span>'
+        +paused
+        +'<button class="copybtn" type="button" data-url="'+esc(l.url)+'" data-i="'+i+'" onclick="copyLure(this)">Copy</button>'
+        +'<button class="copybtn" type="button" onclick="useLureForCampaign(\''+esc(l.url).replace(/\x27/g,"\\x27")+'\')">Use in Campaign</button>'
+        +'</div>';
+    }).join('');
+  });
+}
+function copyLure(btn){
+  var url=btn.getAttribute('data-url');
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(function(){
+      btn.classList.add('ok');btn.textContent='Copied';
+      setTimeout(function(){btn.classList.remove('ok');btn.textContent='Copy';},1500);
+    });
+  } else {
+    var ta=document.createElement('textarea');ta.value=url;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);
+    btn.classList.add('ok');btn.textContent='Copied';
+    setTimeout(function(){btn.classList.remove('ok');btn.textContent='Copy';},1500);
+  }
+}
+function useLureForCampaign(url){
+  openCampForm();
+  setTimeout(function(){var u=document.getElementById('camp-url');if(u)u.value=url;},80);
+}
 function renderEng(eng){
   var g=document.getElementById('eng-grid');if(!g)return;
   if(!eng){g.innerHTML='<div><div class="lbl">No active engagement</div><div class="val dim">Click Edit to create one</div></div>';return;}
@@ -631,7 +683,7 @@ function renderEng(eng){
   }).join('');
 }
 
-initChart();load();setInterval(load,15000);connectWS();
+initChart();load();loadLures();setInterval(load,15000);setInterval(loadLures,30000);connectWS();
 </script>
 <div class="modal" id="modal-camp" role="dialog" aria-modal="true" aria-labelledby="modal-camp-h">
   <div class="modal-card">

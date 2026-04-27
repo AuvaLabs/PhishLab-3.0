@@ -1,0 +1,93 @@
+# PhishLab 3.0 — full stack docker-compose
+#
+# Brings up evilginx, gophish, mailhog, and the evilginx-lab dashboard
+# as four containers with a shared volume so the dashboard's poller
+# can read evilginx's state file.
+#
+# CAVEAT: evilginx needs ports 53 (DNS), 80 (HTTP autocert), and 443
+# (HTTPS phishing proxy). Port 53 conflicts with systemd-resolved on
+# most Ubuntu hosts; run docker/setup-host.sh once before
+# `docker compose up` to disable it. evilginx then runs in
+# network_mode: host so it can bind those ports directly. All other
+# services stay on the bridge network and are reachable only via the
+# dashboard or its reverse proxy.
+#
+# Usage:
+#   sudo bash docker/setup-host.sh    # one-time host prep
+#   cp configs/engagement.example.yaml evilginx-lab.yaml  # edit per engagement
+#   docker compose up -d --build
+#   docker compose logs -f evilginx-lab
+#
+# Dashboard: http://localhost:9000  (front with nginx :8443 + OAuth)
+
+name: phishlab
+
+services:
+  evilginx:
+    image: kgretzky/evilginx2:3.3.0
+    container_name: phishlab-evilginx
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_BIND_SERVICE
+    volumes:
+      - evilginx-state:/opt/evilginx2/state
+      - ./phishlets:/opt/evilginx2/phishlets:ro
+    environment:
+      - HOME=/opt/evilginx2/state
+    command:
+      - "-c"
+      - "/opt/evilginx2/state"
+      - "-p"
+      - "/opt/evilginx2/phishlets"
+
+  gophish:
+    image: gophish/gophish:latest
+    container_name: phishlab-gophish
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8800:3333"
+      - "127.0.0.1:8081:80"
+    volumes:
+      - gophish-data:/opt/gophish/database
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: phishlab-mailhog
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"
+      - "127.0.0.1:1025:1025"
+
+  evilginx-lab:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: auvalabs/phishlab-dashboard:dev
+    container_name: phishlab-dashboard
+    restart: unless-stopped
+    depends_on:
+      - evilginx
+      - gophish
+      - mailhog
+    ports:
+      - "127.0.0.1:9000:9000"
+    env_file:
+      - /etc/evilginx-lab/oauth.env
+    volumes:
+      - lab-db:/data
+      - oauth-config:/etc/evilginx-lab
+      - evilginx-state:/opt/evilginx2/state:ro
+      - ./evilginx-lab.yaml:/etc/evilginx-lab/evilginx-lab.yaml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  evilginx-state:
+    driver: local
+  gophish-data:
+    driver: local
+  lab-db:
+    driver: local
+  oauth-config:
+    driver: local

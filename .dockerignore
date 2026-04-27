@@ -1,0 +1,27 @@
+# Keep build context small and reproducible.
+.git
+.github
+docs
+README.md
+LICENSE
+Makefile
+
+# Local dev artifacts
+dist/
+*.swp
+*.swo
+*~
+.DS_Store
+.env
+
+# Engagement-specific config (sensitive — bake at runtime via volume mount)
+/evilginx-lab.yaml
+
+# Local SQLite databases (runtime artifacts)
+*.db
+*.db-wal
+*.db-shm
+
+# Editor / IDE
+.vscode
+.idea

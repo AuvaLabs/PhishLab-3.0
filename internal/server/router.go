@@ -721,7 +721,7 @@ function downloadReport(){window.location='/api/engagement/report';}
 function sendTestFromForm(){
   var smtp=document.getElementById('camp-smtp').value;
   if(!smtp){alert('Pick a sending profile under Advanced first.');return;}
-  var to=prompt('Send test email to:','nicholai@auvalabs.com');
+  var to=prompt('Send test email to:','');
   if(!to)return;
   fetch('/api/test-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:to,profile_name:smtp})})
     .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
@@ -869,7 +869,7 @@ initChart();load();loadLures();loadDNS();setInterval(load,15000);setInterval(loa
 
       <div class="fld"><label for="camp-tmpl">Email template</label><select id="camp-tmpl"></select><div class="hint" id="camp-tmpl-hint">Don't see a template? Create one on the Templates tab first.</div></div>
 
-      <div class="fld"><label for="camp-url">Phish URL (lure)</label><input id="camp-url" type="url" placeholder="https://login.cyb3rdefence.com/abcdEFGH"><div class="hint">Click "Use in Campaign" on a lure row above to auto-fill.</div></div>
+      <div class="fld"><label for="camp-url">Phish URL (lure)</label><input id="camp-url" type="url" placeholder="https://login.your-phishing-domain.com/abcdEFGH"><div class="hint">Click "Use in Campaign" on a lure row above to auto-fill.</div></div>
 
       <details style="margin-top:14px"><summary style="cursor:pointer;font-size:12px;color:var(--muted);user-select:none">Advanced (sender / landing page)</summary>
         <div style="margin-top:10px">

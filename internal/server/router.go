@@ -32,6 +32,16 @@ func NewRouter(api *handlers.APIHandler, authH *auth.Handler) http.Handler {
 	apiRouter.HandleFunc("/templates", api.HandleCreateTemplate).Methods("POST")
 	apiRouter.HandleFunc("/templates/{id:[0-9]+}", api.HandleDeleteTemplate).Methods("DELETE")
 
+	// Stage 4 — all-in-one campaign UI (groups, profiles, pages, results)
+	apiRouter.HandleFunc("/groups", api.HandleGetGroups).Methods("GET")
+	apiRouter.HandleFunc("/groups", api.HandleCreateGroup).Methods("POST")
+	apiRouter.HandleFunc("/profiles", api.HandleGetSendingProfiles).Methods("GET")
+	apiRouter.HandleFunc("/pages", api.HandleGetPages).Methods("GET")
+	apiRouter.HandleFunc("/campaigns/{id:[0-9]+}", api.HandleGetCampaignDetail).Methods("GET")
+
+	// Stage 5 — engagement metadata editable in dashboard
+	apiRouter.HandleFunc("/engagement", api.HandleUpdateEngagement).Methods("PUT", "POST")
+
 	if authH != nil {
 		apiRouter.HandleFunc("/auth/whoami", authH.WhoAmI).Methods("GET")
 		r.HandleFunc("/auth/google/login", authH.Login).Methods("GET")
@@ -198,6 +208,33 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .detailrow{background:var(--bg3) !important}
 .detailrow td{padding:0 !important}
 .detailrow.hide{display:none}
+.tbar{display:flex;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--bg2);flex-wrap:wrap}
+.tbar-btn{padding:7px 14px;font-size:12px;font-weight:600;border-radius:6px;cursor:pointer;font-family:inherit;background:var(--bg3);color:var(--text);border:1px solid var(--border2);transition:all .15s}
+.tbar-btn:hover,.tbar-btn:focus-visible{background:var(--bg);border-color:var(--cyan);color:var(--cyan)}
+.tbar-btn.primary{background:var(--cyan-dim);border-color:rgba(0,212,255,.4);color:var(--cyan)}
+.tbar-btn.primary:hover{background:var(--cyan);color:var(--bg)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:300;padding:20px}
+.modal.show{display:flex}
+.modal-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.modal-h{display:flex;justify-content:space-between;align-items:center;padding:16px 22px;border-bottom:1px solid var(--border)}
+.modal-h h3{font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--cyan)}
+.modal-x{background:transparent;border:none;color:var(--muted);font-size:22px;cursor:pointer;padding:0;width:30px;height:30px;border-radius:4px}
+.modal-x:hover{color:var(--text);background:var(--bg3)}
+.modal-b{padding:18px 22px}
+.modal-f{padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px}
+.fld{margin-bottom:14px}
+.fld label{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:6px}
+.fld input,.fld select,.fld textarea{width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:13px;font-family:inherit;transition:border-color .15s}
+.fld input:focus,.fld select:focus,.fld textarea:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 2px var(--cyan-dim)}
+.fld textarea{min-height:80px;resize:vertical;font-family:'SF Mono',monospace;font-size:12px}
+.fld .hint{font-size:11px;color:var(--muted2);margin-top:4px}
+.engcard{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:18px 22px;margin-bottom:18px}
+.engcard-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.engcard-h h3{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--cyan)}
+.engcard-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+.engcard-grid .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:3px}
+.engcard-grid .val{font-size:13px;color:var(--text);font-weight:500}
+.engcard-grid .val.dim{color:var(--muted2);font-style:italic}
 .empty{text-align:center;padding:48px 20px;color:var(--muted);font-size:13px}
 .empty-ico{font-size:32px;margin-bottom:12px;opacity:.35}
 .btn-del{padding:3px 10px;background:var(--red-dim);border:1px solid rgba(255,23,68,.3);color:var(--red);border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit}
@@ -257,6 +294,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       </div>
     </div>
   </section>
+  <section class="engcard" aria-label="Engagement metadata">
+    <div class="engcard-h">
+      <h3>Engagement</h3>
+      <button class="tbar-btn" type="button" onclick="openEngForm()">&#x270F; Edit</button>
+    </div>
+    <div class="engcard-grid" id="eng-grid">
+      <div><div class="lbl">Loading&#x2026;</div></div>
+    </div>
+  </section>
   <section class="tabs-wrap" aria-label="Engagement detail tabs">
     <div class="tabs-hdr" role="tablist" aria-label="Engagement views">
       <button class="tbtn" type="button" role="tab" id="tab-btn-timeline"    aria-selected="true"  aria-controls="tab-timeline"    data-tab="timeline"    tabindex="0">&#x23F1; Timeline</button>
@@ -276,9 +322,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       </div>
     </div>
     <div class="tpane" id="tab-campaigns" role="tabpanel" aria-labelledby="tab-btn-campaigns" hidden>
+      <div class="tbar">
+        <button class="tbar-btn primary" type="button" onclick="openCampForm()">&#x2795; New Campaign</button>
+        <button class="tbar-btn" type="button" onclick="openGroupForm()">&#x2795; New Group</button>
+        <button class="tbar-btn" type="button" id="btn-sync" onclick="sync()">&#x21BB; Sync from Gophish</button>
+      </div>
       <div style="overflow-x:auto">
         <table class="dtable">
-          <thead><tr><th scope="col">Campaign</th><th scope="col">Status</th><th scope="col">Targets</th><th scope="col">Template</th><th scope="col">Phish URL</th><th scope="col">Launched</th></tr></thead>
+          <thead><tr><th scope="col">Campaign</th><th scope="col">Status</th><th scope="col">Targets</th><th scope="col">Template</th><th scope="col">Phish URL</th><th scope="col">Launched</th><th scope="col"><span class="sr-only">Results</span></th></tr></thead>
           <tbody id="camp-body"></tbody>
         </table>
       </div>
@@ -361,6 +412,7 @@ function render(d){
   else{pill.className='status-pill off';pulse.className='pulse off';st.textContent=eng?eng.status:'No Engagement';}
   document.getElementById('eng-name').textContent=eng?eng.name:'No engagement loaded';
   document.getElementById('eng-id').textContent=eng?eng.id:'';
+  renderEng(eng);
   document.getElementById('m0').textContent=d.credential_count||0;
   document.getElementById('m1').textContent=d.campaign_count||0;
   document.getElementById('m2').textContent=(d.timeline||[]).length;
@@ -490,7 +542,147 @@ function connectWS(){
   ws.onclose=function(){setTimeout(connectWS,3000);};
 }
 
+// ===== Stage 4 + 5: campaign create / group create / engagement edit =====
+function showModal(id){document.getElementById(id).classList.add('show');}
+function hideModal(id){document.getElementById(id).classList.remove('show');}
+function fillSelect(id,items,key){
+  var s=document.getElementById(id);s.innerHTML='';
+  if(!items||!items.length){s.innerHTML='<option value="">(none — create one first)</option>';return;}
+  items.forEach(function(it){var o=document.createElement('option');o.value=it[key];o.textContent=it[key];s.appendChild(o);});
+}
+function openCampForm(){
+  Promise.all([
+    fetch('/api/templates').then(function(r){return r.json();}),
+    fetch('/api/groups').then(function(r){return r.json();}),
+    fetch('/api/profiles').then(function(r){return r.json();}),
+    fetch('/api/pages').then(function(r){return r.json();})
+  ]).then(function(arr){
+    fillSelect('camp-tmpl',arr[0]||[],'name');
+    fillSelect('camp-group',arr[1]||[],'name');
+    fillSelect('camp-smtp',arr[2]||[],'name');
+    fillSelect('camp-page',arr[3]||[],'name');
+    showModal('modal-camp');
+  });
+}
+function submitCamp(){
+  var body={
+    name:document.getElementById('camp-name').value,
+    template:{name:document.getElementById('camp-tmpl').value},
+    page:{name:document.getElementById('camp-page').value},
+    smtp:{name:document.getElementById('camp-smtp').value},
+    groups:[{name:document.getElementById('camp-group').value}],
+    url:document.getElementById('camp-url').value,
+    launch_date:new Date().toISOString()
+  };
+  if(!body.name||!body.template.name||!body.groups[0].name||!body.smtp.name||!body.page.name||!body.url){alert('All fields required');return;}
+  fetch('/api/campaigns',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
+    .then(function(){hideModal('modal-camp');load();})
+    .catch(function(e){alert('Create failed: '+e.message);});
+}
+function openGroupForm(){showModal('modal-group');}
+function submitGroup(){
+  var name=document.getElementById('group-name').value.trim();
+  var raw=document.getElementById('group-targets').value;
+  var targets=raw.split('\n').map(function(line){
+    var p=line.split(',').map(function(s){return s.trim();});
+    if(!p[0]||p[0].indexOf('@')<0)return null;
+    return {email:p[0],first_name:p[1]||'',last_name:p[2]||'',position:p[3]||''};
+  }).filter(Boolean);
+  if(!name||!targets.length){alert('Name + at least 1 target line (email,first,last,position) required');return;}
+  fetch('/api/groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,targets:targets})})
+    .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
+    .then(function(){hideModal('modal-group');alert('Group "'+name+'" created with '+targets.length+' targets');})
+    .catch(function(e){alert('Create failed: '+e.message);});
+}
+function openEngForm(){
+  fetch('/api/dashboard').then(function(r){return r.json();}).then(function(d){
+    var e=d.engagement||{};
+    ['id','name','client','operator','start_date','end_date','domain','phishlet_name','roe_reference','notes'].forEach(function(k){
+      var el=document.getElementById('eng-f-'+k);if(el)el.value=e[k]||'';
+    });
+    showModal('modal-eng');
+  });
+}
+function submitEng(){
+  var body={};
+  ['id','name','client','operator','start_date','end_date','domain','phishlet_name','roe_reference','notes'].forEach(function(k){
+    body[k]=document.getElementById('eng-f-'+k).value;
+  });
+  fetch('/api/engagement',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
+    .then(function(){hideModal('modal-eng');load();})
+    .catch(function(e){alert('Save failed: '+e.message);});
+}
+function renderEng(eng){
+  var g=document.getElementById('eng-grid');if(!g)return;
+  if(!eng){g.innerHTML='<div><div class="lbl">No active engagement</div><div class="val dim">Click Edit to create one</div></div>';return;}
+  var fields=[
+    ['Engagement','id'],['Client','client'],['Operator','operator'],
+    ['Window','_window'],['Domain','domain'],['Phishlet','phishlet_name'],
+    ['RoE','roe_reference'],['Status','status']
+  ];
+  g.innerHTML=fields.map(function(f){
+    var v;
+    if(f[1]==='_window')v=(eng.start_date||'?')+' — '+(eng.end_date||'?');
+    else v=eng[f[1]]||'';
+    var cls=v?'val':'val dim';if(!v)v='(not set)';
+    return '<div><div class="lbl">'+esc(f[0])+'</div><div class="'+cls+'">'+esc(v)+'</div></div>';
+  }).join('');
+}
+
 initChart();load();setInterval(load,15000);connectWS();
 </script>
+<div class="modal" id="modal-camp" role="dialog" aria-modal="true" aria-labelledby="modal-camp-h">
+  <div class="modal-card">
+    <div class="modal-h"><h3 id="modal-camp-h">New Campaign</h3><button class="modal-x" type="button" onclick="hideModal('modal-camp')" aria-label="Close">&times;</button></div>
+    <div class="modal-b">
+      <div class="fld"><label for="camp-name">Campaign name</label><input id="camp-name" type="text" placeholder="e.g. M365 Verification - 2026-04-30"></div>
+      <div class="fld"><label for="camp-tmpl">Email template</label><select id="camp-tmpl"></select></div>
+      <div class="fld"><label for="camp-page">Landing page</label><select id="camp-page"></select></div>
+      <div class="fld"><label for="camp-smtp">Sending profile</label><select id="camp-smtp"></select></div>
+      <div class="fld"><label for="camp-group">Target group</label><select id="camp-group"></select></div>
+      <div class="fld"><label for="camp-url">Phish URL (lure)</label><input id="camp-url" type="url" placeholder="https://login.cyb3rdefence.com/abcdEFGH"><div class="hint">Where {{.URL}} resolves to in the email. Append the lure path generated by evilginx.</div></div>
+    </div>
+    <div class="modal-f">
+      <button class="tbar-btn" type="button" onclick="hideModal('modal-camp')">Cancel</button>
+      <button class="tbar-btn primary" type="button" onclick="submitCamp()">Launch</button>
+    </div>
+  </div>
+</div>
+<div class="modal" id="modal-group" role="dialog" aria-modal="true" aria-labelledby="modal-group-h">
+  <div class="modal-card">
+    <div class="modal-h"><h3 id="modal-group-h">New Target Group</h3><button class="modal-x" type="button" onclick="hideModal('modal-group')" aria-label="Close">&times;</button></div>
+    <div class="modal-b">
+      <div class="fld"><label for="group-name">Group name</label><input id="group-name" type="text" placeholder="e.g. Pilot - Engineering"></div>
+      <div class="fld"><label for="group-targets">Targets (one per line: <code>email,first,last,position</code>)</label><textarea id="group-targets" placeholder="alice@target.com,Alice,Smith,Engineer
+bob@target.com,Bob,Jones,Manager"></textarea></div>
+    </div>
+    <div class="modal-f">
+      <button class="tbar-btn" type="button" onclick="hideModal('modal-group')">Cancel</button>
+      <button class="tbar-btn primary" type="button" onclick="submitGroup()">Create</button>
+    </div>
+  </div>
+</div>
+<div class="modal" id="modal-eng" role="dialog" aria-modal="true" aria-labelledby="modal-eng-h">
+  <div class="modal-card">
+    <div class="modal-h"><h3 id="modal-eng-h">Edit Engagement</h3><button class="modal-x" type="button" onclick="hideModal('modal-eng')" aria-label="Close">&times;</button></div>
+    <div class="modal-b">
+      <div class="fld"><label for="eng-f-id">Engagement ID</label><input id="eng-f-id" type="text" placeholder="ENG-2026-002"></div>
+      <div class="fld"><label for="eng-f-name">Engagement name</label><input id="eng-f-name" type="text"></div>
+      <div class="fld"><label for="eng-f-client">Client</label><input id="eng-f-client" type="text"></div>
+      <div class="fld"><label for="eng-f-operator">Operator</label><input id="eng-f-operator" type="text" placeholder="operator@example.com"></div>
+      <div class="fld" style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div><label for="eng-f-start_date">Start (YYYY-MM-DD)</label><input id="eng-f-start_date" type="text"></div><div><label for="eng-f-end_date">End (YYYY-MM-DD)</label><input id="eng-f-end_date" type="text"></div></div>
+      <div class="fld"><label for="eng-f-domain">Phishing domain</label><input id="eng-f-domain" type="text"></div>
+      <div class="fld"><label for="eng-f-phishlet_name">Phishlet</label><input id="eng-f-phishlet_name" type="text"></div>
+      <div class="fld"><label for="eng-f-roe_reference">RoE reference</label><input id="eng-f-roe_reference" type="text" placeholder="path or doc id"></div>
+      <div class="fld"><label for="eng-f-notes">Notes</label><textarea id="eng-f-notes"></textarea></div>
+    </div>
+    <div class="modal-f">
+      <button class="tbar-btn" type="button" onclick="hideModal('modal-eng')">Cancel</button>
+      <button class="tbar-btn primary" type="button" onclick="submitEng()">Save</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>`

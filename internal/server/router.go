@@ -165,6 +165,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .cbadge.created{background:var(--cyan-dim);color:var(--cyan);border:1px solid rgba(0,212,255,.3)}
 .cbadge.completed{background:var(--bg3);color:var(--muted);border:1px solid var(--border2)}
 .cbadge.error{background:var(--red-dim);color:var(--red);border:1px solid rgba(255,23,68,.3)}
+.cstat{display:inline-block;padding:3px 10px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+.cstat.visited{background:var(--bg3);color:var(--muted);border:1px solid var(--border2)}
+.cstat.vulnerable{background:var(--amber-dim);color:var(--amber);border:1px solid rgba(255,179,0,.4)}
+.cstat.exploitable{background:var(--red-dim);color:var(--red);border:1px solid rgba(255,23,68,.4);animation:pulse-red 2s ease-in-out infinite}
+@keyframes pulse-red{0%,100%{box-shadow:0 0 0 0 rgba(255,23,68,.5)}50%{box-shadow:0 0 0 6px rgba(255,23,68,0)}}
+@media(prefers-reduced-motion:reduce){.cstat.exploitable{animation:none}}
+.recpane{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin:10px 0}
+.recpane h4{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--cyan);margin-bottom:10px;font-weight:700}
+.recpane ul{margin:0;padding-left:20px}
+.recpane li{font-size:12px;color:var(--text);line-height:1.6;margin-bottom:8px}
+.recpane li::marker{color:var(--cyan)}
+.recpane .rec-meta{font-size:11px;color:var(--muted);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.expandbtn{background:transparent;border:1px solid var(--border2);color:var(--cyan);padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;font-family:inherit}
+.expandbtn:hover,.expandbtn:focus-visible{background:var(--cyan-dim);border-color:var(--cyan)}
+.detailrow{background:var(--bg3) !important}
+.detailrow td{padding:0 !important}
+.detailrow.hide{display:none}
 .empty{text-align:center;padding:48px 20px;color:var(--muted);font-size:13px}
 .empty-ico{font-size:32px;margin-bottom:12px;opacity:.35}
 .btn-del{padding:3px 10px;background:var(--red-dim);border:1px solid rgba(255,23,68,.3);color:var(--red);border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit}
@@ -237,7 +254,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="tpane" id="tab-credentials" role="tabpanel" aria-labelledby="tab-btn-credentials" hidden>
       <div style="overflow-x:auto">
         <table class="dtable">
-          <thead><tr><th scope="col">Captured</th><th scope="col">Phishlet</th><th scope="col">Username</th><th scope="col">Password</th><th scope="col">Source IP</th><th scope="col">User Agent</th></tr></thead>
+          <thead><tr><th scope="col">Status</th><th scope="col">Captured</th><th scope="col">Phishlet</th><th scope="col">Username</th><th scope="col">Password</th><th scope="col">Cookies</th><th scope="col">Source IP</th><th scope="col"><span class="sr-only">Recommendations</span></th></tr></thead>
           <tbody id="creds-body"></tbody>
         </table>
       </div>
@@ -386,12 +403,40 @@ function renderTimeline(evts){
 }
 
 function renderCreds(creds){
-  if(!creds.length){document.getElementById('creds-body').innerHTML='<tr><td colspan="6"><div class="empty"><div class="empty-ico" aria-hidden="true">🔑</div>No credentials captured yet</div></td></tr>';return;}
+  if(!creds.length){document.getElementById('creds-body').innerHTML='<tr><td colspan="8"><div class="empty"><div class="empty-ico" aria-hidden="true">&#x1F511;</div>No credentials captured yet</div></td></tr>';return;}
   var rows='';
   creds.forEach(function(c){
-    rows+='<tr><td style="white-space:nowrap;color:var(--muted)">'+fmtFull(c.captured_at)+'</td><td><span class="ptag on">'+esc(c.phishlet)+'</span></td><td><span class="mono code-c">'+esc(c.username)+'</span></td><td><span class="mono code-a">'+esc(c.password)+'</span></td><td><span class="mip">'+esc(c.remote_addr)+'</span></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px">'+esc(c.user_agent)+'</td></tr>';
+    var st=(c.status||'Visited').toLowerCase();
+    var stLabel=c.status||'Visited';
+    var cookieCount=c.cookie_count||0;
+    var pwd=c.password?esc(c.password):'<span style="color:var(--muted2)">&#8212;</span>';
+    var usr=c.username?esc(c.username):'<span style="color:var(--muted2)">(no username captured)</span>';
+    var recsHtml='';
+    if(c.recommendations&&c.recommendations.length){
+      var lis=c.recommendations.map(function(r){return '<li>'+esc(r)+'</li>';}).join('');
+      recsHtml='<div class="recpane"><div class="rec-meta">Session id <code>'+esc(c.session_id)+'</code> &middot; '+cookieCount+' cookie(s) captured &middot; UA: '+esc(c.user_agent||'').substring(0,100)+'</div><h4>Recommended Remediation</h4><ul>'+lis+'</ul></div>';
+    }
+    rows+='<tr data-cred="'+c.id+'">'
+       +'<td><span class="cstat '+st+'">'+esc(stLabel)+'</span></td>'
+       +'<td style="white-space:nowrap;color:var(--muted)">'+fmtFull(c.captured_at)+'</td>'
+       +'<td><span class="ptag on">'+esc(c.phishlet)+'</span></td>'
+       +'<td><span class="mono code-c">'+usr+'</span></td>'
+       +'<td><span class="mono code-a">'+pwd+'</span></td>'
+       +'<td style="text-align:center"><span class="mono">'+cookieCount+'</span></td>'
+       +'<td><span class="mip">'+esc(c.remote_addr)+'</span></td>'
+       +'<td><button class="expandbtn" type="button" aria-expanded="false" aria-controls="rec-'+c.id+'" onclick="toggleRec('+c.id+')">Why?</button></td>'
+       +'</tr>'
+       +'<tr class="detailrow hide" id="rec-'+c.id+'"><td colspan="8">'+recsHtml+'</td></tr>';
   });
   document.getElementById('creds-body').innerHTML=rows;
+}
+function toggleRec(id){
+  var row=document.getElementById('rec-'+id);
+  var btn=document.querySelector('tr[data-cred="'+id+'"] .expandbtn');
+  if(!row||!btn)return;
+  var hidden=row.classList.toggle('hide');
+  btn.setAttribute('aria-expanded',hidden?'false':'true');
+  btn.textContent=hidden?'Why?':'Hide';
 }
 
 function renderCamps(camps){

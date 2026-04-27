@@ -129,6 +129,8 @@ Example output:
 
 ![Evilginx-Lab Dashboard](images/07-evilginx-lab-dashboard.png)
 
+> **Screenshot note:** The `07-evilginx-lab-dashboard.png` image above predates the dashboard overhaul (Phishlets / Audit / DNS Health tabs, status badges, real-time capture notifications). Pending refresh &mdash; see [`docs/RUNBOOK.md`](RUNBOOK.md) for the current dashboard tour.
+
 ### Option A: CLI Status
 
 ```bash

@@ -1,49 +1,87 @@
-# PhishLab 3.0
+<p align="center">
+  <img src="docs/landing/assets/logo.svg" alt="PhishLab 3.0" width="360"/>
+</p>
 
-A ready-to-deploy phishing lab environment using Evilginx3 (v3.3.0), Gophish, and Mailhog for security researchers, red teams, and penetration testers.
+<p align="center">
+  <strong>Adversary-in-the-middle phishing engagement platform with same-day defender-side detection validation.</strong>
+</p>
 
-**This setup is for authorized testing only. Do not use for unauthorized access.**
+<p align="center">
+  <a href="https://auvalabs.github.io/PhishLab-3.0/landing/">Public landing</a> &middot;
+  <a href="docs/RUNBOOK.md">Operator runbook</a> &middot;
+  <a href="docs/DEPLOY.md">Deploy guide</a> &middot;
+  <a href="docs/DOCKER.md">Docker</a> &middot;
+  <a href="docs/USAGE.md">Engagement workflow</a>
+</p>
+
+> [!CAUTION]
+> **For authorized testing only.** Use of this platform against systems you do not own or have explicit written permission (signed Rules of Engagement) to test is illegal in most jurisdictions and is not supported by the maintainers.
 
 ---
 
 ## What's Included
 
-- **Evilginx3 v3.3.0** - Reverse proxy phishing framework with MiTM and 2FA bypass capabilities
-- **Gophish v0.12.1** - Phishing campaign management and email delivery
-- **Mailhog** - Local SMTP server with web UI for capturing test emails
-- **UFW Firewall** - Configured to allow only essential ports
-- **Systemd services** - All three tools run as managed services
-- **Pre-loaded phishlets** - 11 ready-to-use phishlets for common targets
+- **Evilginx3 v3.3.0** &mdash; reverse-proxy phishing framework with MFA-relay and session-cookie capture
+- **Gophish v0.12.1** &mdash; campaign management + email delivery + tracking
+- **Mailhog** &mdash; local SMTP capture for development and dry-runs
+- **evilginx-lab dashboard** &mdash; Go service with Google OAuth login that orchestrates all of the above:
+  - Engagement metadata, captures, status badges (Visited / Vulnerable / Exploitable), per-session vendor-specific recommendations
+  - One-form campaign launch with paste-emails recipient list
+  - Active Lures card with Copy + "Use in Campaign"
+  - DNS Health card (MX / SPF / DKIM / DMARC pass-fail-warn)
+  - Phishlet management (enable / disable / create lure) &mdash; no SSH required
+  - Audit log of every state-changing action (forensic trail for multi-operator engagements)
+  - User allowlist management (Google OAuth, runtime add/remove via UI)
+  - Capture replay against `outlook.office.com` for purple-team detection validation
+  - Markdown engagement-report export ready for the client deliverable
+  - Real-time capture notifications: WebAudio chirp + browser-tab title flash + toast
+  - Cookie-Editor JSON export per session
+- **Systemd services** + **UFW firewall** + **nginx ops panel** with TLS
+- **Daily backup cron** to `/var/backups/phishlab/` with 14-day retention
+- **One-shot bare-metal install OR Docker compose stack**
 
 ---
 
 ## Requirements
 
-- Ubuntu 20.04+ x64 VPS
-- Root SSH access
-- A registered domain with DNS A-records pointing to the VPS IP:
-  - `yourdomain.com` (or a subdomain like `login.yourdomain.com`)
-- Ports 80 and 443 open to the public internet
+- Ubuntu 22.04+ x64 VPS (clean), root SSH access
+- Public IPv4 with DNS A-records pointing the phishing apex at it
+- Ports 53/UDP+TCP, 80, 443 open to the public internet (53 is for evilginx autocert + phishlet DNS)
+- For the Docker path: Docker Engine 24+ + `docker compose` plugin
 
 ---
 
 ## Installation
 
-SSH into your server as root and run:
+### Bare metal (recommended for production)
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/AuvaLabs/PhishLab-3.0/main/install.sh)
+git clone https://github.com/AuvaLabs/PhishLab-3.0.git
+cd PhishLab-3.0
+sudo bash install.sh phish.yourdomain.com --with-ops-panel
 ```
 
-You will be prompted for your domain. Alternatively, pass it as an argument:
+`install.sh` is idempotent &mdash; re-run safely. The `--with-ops-panel` flag provisions an nginx reverse-proxy on port 8443 with a self-signed cert so the dashboard, Gophish, and Mailhog are reachable from a workstation without an SSH tunnel.
+
+### Docker
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/AuvaLabs/PhishLab-3.0/main/install.sh) login.yourdomain.com
+git clone https://github.com/AuvaLabs/PhishLab-3.0.git
+cd PhishLab-3.0
+sudo bash docker/setup-host.sh        # one-time host prep (frees :53 from systemd-resolved)
+docker compose up -d --build
 ```
 
-The script is idempotent and can be re-run safely.
+See [`docs/DOCKER.md`](docs/DOCKER.md) for known limitations (Linux-only for evilginx, no automatic LE renewal in container yet).
 
-For a full deployment runbook (DNS prerequisites, install, verification, rollback), see [docs/DEPLOY.md](docs/DEPLOY.md). Engagement workflow is in [docs/USAGE.md](docs/USAGE.md).
+### Post-install (5 minutes)
+
+1. Configure Google OAuth: edit `/etc/evilginx-lab/oauth.env` with your OAuth Client ID + Secret + allowlisted email
+2. Restart the dashboard: `sudo systemctl restart evilginx-lab`
+3. Remove `auth_basic` from `/etc/nginx/sites-available/phishlab-ops` for the dashboard vhost so OAuth becomes the sole gate
+4. Open `https://dashboard.your-apex.com:8443/` &mdash; sign in with Google
+
+The full step-by-step lives in [`docs/RUNBOOK.md`](docs/RUNBOOK.md) &mdash; fresh-VPS to client-deliverable in nine numbered steps with a troubleshooting table.
 
 ---
 

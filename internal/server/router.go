@@ -302,6 +302,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="status-pill off" id="spill" role="status" aria-live="polite" aria-label="Engagement status"><div class="pulse off" id="spulse" aria-hidden="true"></div><span id="stext">&#x2014;</span></div>
     <span class="sync-label" id="sync-lbl"></span>
     <button class="btn-sync" id="btn-sync" type="button" onclick="sync()" aria-label="Sync campaign data from Gophish">&#x21BB;&nbsp;Sync</button>
+    <button class="btn-sync" type="button" onclick="openUsersModal()" aria-label="Manage dashboard users">&#x1F465;&nbsp;Users</button>
   </div>
 </header>
 <main class="main" id="main">
@@ -350,18 +351,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <span style="font-size:11px;color:var(--muted2)">Phishing entry URLs &mdash; paste into Gophish "Phish URL" field</span>
     </div>
     <div id="lures-list"><div class="lbl">Loading&#x2026;</div></div>
-  </section>
-  <section class="engcard" aria-label="Dashboard users">
-    <div class="engcard-h">
-      <h3>Dashboard Users</h3>
-      <span style="font-size:11px;color:var(--muted2)">Who can sign in via Google OAuth</span>
-    </div>
-    <div id="users-list"><div class="lbl">Loading&#x2026;</div></div>
-    <form onsubmit="addUser(event)" style="display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap">
-      <input type="text" id="user-entry" placeholder="user@example.com  OR  example.com (whole domain)" style="flex:1;min-width:240px;padding:8px 12px;background:var(--bg);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:13px;font-family:inherit">
-      <button class="tbar-btn primary" type="submit">&#x2795; Add User</button>
-    </form>
-    <div style="margin-top:6px;font-size:11px;color:var(--muted2)">Email: only that single user. Domain: anyone with that Workspace domain. Both formats accepted.</div>
   </section>
   <section class="tabs-wrap" aria-label="Engagement detail tabs">
     <div class="tabs-hdr" role="tablist" aria-label="Engagement views">
@@ -725,6 +714,7 @@ function submitEng(){
     .then(function(){hideModal('modal-eng');load();})
     .catch(function(e){alert('Save failed: '+e.message);});
 }
+function openUsersModal(){loadUsers();showModal('modal-users');}
 function loadUsers(){
   fetch('/api/users').then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(d){
     var box=document.getElementById('users-list');if(!box)return;
@@ -806,7 +796,7 @@ function renderEng(eng){
   }).join('');
 }
 
-initChart();load();loadLures();loadUsers();setInterval(load,15000);setInterval(loadLures,30000);connectWS();
+initChart();load();loadLures();setInterval(load,15000);setInterval(loadLures,30000);connectWS();
 </script>
 <div class="modal" id="modal-camp" role="dialog" aria-modal="true" aria-labelledby="modal-camp-h">
   <div class="modal-card">
@@ -852,6 +842,23 @@ bob@target.com,Bob,Jones,Manager"></textarea></div>
     <div class="modal-f">
       <button class="tbar-btn" type="button" onclick="hideModal('modal-group')">Cancel</button>
       <button class="tbar-btn primary" type="button" onclick="submitGroup()">Create</button>
+    </div>
+  </div>
+</div>
+<div class="modal" id="modal-users" role="dialog" aria-modal="true" aria-labelledby="modal-users-h">
+  <div class="modal-card">
+    <div class="modal-h"><h3 id="modal-users-h">Dashboard Users</h3><button class="modal-x" type="button" onclick="hideModal('modal-users')" aria-label="Close">&times;</button></div>
+    <div class="modal-b">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Who can sign in via Google OAuth. Adds take effect immediately &mdash; no service restart.</div>
+      <div id="users-list"><div class="lbl">Loading&#x2026;</div></div>
+      <form onsubmit="addUser(event)" style="display:flex;gap:8px;margin-top:14px;align-items:center;flex-wrap:wrap">
+        <input type="text" id="user-entry" placeholder="user@example.com  OR  example.com (whole domain)" style="flex:1;min-width:240px;padding:8px 12px;background:var(--bg);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:13px;font-family:inherit">
+        <button class="tbar-btn primary" type="submit">&#x2795; Add User</button>
+      </form>
+      <div style="margin-top:6px;font-size:11px;color:var(--muted2)">Email: only that single user. Domain: anyone with that Workspace domain. Both formats accepted.</div>
+    </div>
+    <div class="modal-f">
+      <button class="tbar-btn" type="button" onclick="hideModal('modal-users')">Done</button>
     </div>
   </div>
 </div>

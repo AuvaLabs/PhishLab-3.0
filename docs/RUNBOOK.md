@@ -142,6 +142,25 @@ Record which alerts fired vs. didn't — this is the actual deliverable for a de
 
 **Done when:** you have a list of "alerts that fired" and "alerts that should have fired but didn't" for each replayed session.
 
+### What FIDO2 / passkeys / Windows Hello changes
+
+If the target user authenticates with a **phishing-resistant factor** (FIDO2 security key, passkey, Windows Hello for Business, smart-card / certificate auth), here is what actually happens vs. what most operators expect:
+
+| Capture stage | Result against phishing-resistant auth |
+|---|---|
+| User clicks lure URL | works (transport is just HTTP) |
+| User lands at proxied login page | works (the proxy is rewriting Microsoft's HTML) |
+| User completes WebAuthn challenge | **fails** — the FIDO2 protocol cryptographically binds the assertion to the **origin (`window.location.hostname`)** the browser sees. A passkey on `login.cyb3rdefence.com` will not produce an assertion that `login.microsoftonline.com` accepts |
+| Post-auth session cookie capture | works **only if** the user falls back to a phishable factor (password + push, password + TOTP) before completing WebAuthn |
+
+This is by design — FIDO2 is the canonical anti-phishing factor, and the binding is enforced by the browser, not Microsoft. No reverse-proxy AitM tool (evilginx, Modlishka, Muraena) can defeat it without exploiting an unrelated browser vulnerability.
+
+**Practical RoE language to surface with the client:**
+
+> Phishing-resistant authentication factors (FIDO2 security keys, passkeys, Windows Hello for Business, certificate-based auth) cannot be captured by this engagement's adversary-in-the-middle methodology. Users protected by these factors will be observed clicking the lure but **not** as Vulnerable or Exploitable. Successful captures against such targets indicate the user fell back to a phishable factor — itself a finding worth surfacing.
+
+When you brief defenders, the corollary is: **enrolling privileged accounts in FIDO2 / passkey is the single largest reduction in AitM phishing risk.** The detection-validation work above is most useful for accounts that cannot be moved to FIDO2 (legacy services, shared mailboxes, contractor identities).
+
 ## 8. Generate the engagement report
 
 Click **Report** on the Engagement card. This downloads a Markdown

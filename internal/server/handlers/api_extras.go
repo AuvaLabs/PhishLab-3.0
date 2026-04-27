@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -798,7 +799,12 @@ func (h *APIHandler) HandleCreateLure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Path == "" {
-		body.Path = "/" + randString(8)
+		s, err := randString(8)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to generate lure path: "+err.Error())
+			return
+		}
+		body.Path = "/" + s
 	} else if !strings.HasPrefix(body.Path, "/") {
 		body.Path = "/" + body.Path
 	}
@@ -872,8 +878,22 @@ func (h *APIHandler) HandleReplaySession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Replay targets are restricted to a known set so an authenticated
+	// operator cannot turn the dashboard into an SSRF probe against
+	// internal infra (cloud metadata, RFC1918, evilginx loopback, etc).
+	allowedReplayHosts := map[string]bool{
+		"outlook.office.com":  true,
+		"outlook.office365.com": true,
+		"portal.office.com":   true,
+		"www.office.com":      true,
+	}
 	target := "https://outlook.office.com/"
 	if t := r.URL.Query().Get("target"); t != "" {
+		u, err := url.Parse(t)
+		if err != nil || u.Scheme != "https" || !allowedReplayHosts[strings.ToLower(u.Host)] {
+			writeError(w, http.StatusBadRequest, "target host not in allowlist (allowed: outlook.office.com, outlook.office365.com, portal.office.com, www.office.com)")
+			return
+		}
 		target = t
 	}
 
@@ -988,12 +1008,17 @@ func (h *APIHandler) HandleReplaySession(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-func randString(n int) string {
+// randString returns n cryptographically-random characters from a
+// 52-character alphabet. Used for evilginx lure paths, where path
+// secrecy is the primary defence against premature URL discovery.
+func randString(n int) (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
-		time.Sleep(time.Microsecond)
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
 	}
-	return string(b)
+	for i := range buf {
+		buf[i] = charset[int(buf[i])%len(charset)]
+	}
+	return string(buf), nil
 }

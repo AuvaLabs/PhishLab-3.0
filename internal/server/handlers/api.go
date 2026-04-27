@@ -47,7 +47,10 @@ func (h *APIHandler) SetOrchestrator(o *campaign.Orchestrator) {
 	h.Orchestrator = o
 }
 
-// BroadcastEvent sends an event to all connected WebSocket clients
+// BroadcastEvent sends an event to all connected WebSocket clients.
+// Failed writes mark the connection as dead; dead connections are
+// removed under a write-lock after the broadcast pass so we never
+// mutate the map while only holding the read-lock.
 func (h *APIHandler) BroadcastEvent(event any) {
 	data, err := json.Marshal(event)
 	if err != nil {
@@ -55,16 +58,25 @@ func (h *APIHandler) BroadcastEvent(event any) {
 		return
 	}
 
+	var dead []*websocket.Conn
 	h.wsMu.RLock()
-	defer h.wsMu.RUnlock()
-
 	for conn := range h.wsClients {
 		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
 			log.Printf("[ws] error writing to client: %v", err)
-			conn.Close()
-			delete(h.wsClients, conn)
+			dead = append(dead, conn)
 		}
 	}
+	h.wsMu.RUnlock()
+
+	if len(dead) == 0 {
+		return
+	}
+	h.wsMu.Lock()
+	for _, conn := range dead {
+		delete(h.wsClients, conn)
+		conn.Close()
+	}
+	h.wsMu.Unlock()
 }
 
 // HandleWebSocket upgrades HTTP to WebSocket for real-time events

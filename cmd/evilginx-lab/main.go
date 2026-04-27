@@ -275,7 +275,12 @@ func deployCmd() *cobra.Command {
 				<-sigCh
 				fmt.Println("\nShutting down...")
 				cancel()
-				srv.Close()
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer shutdownCancel()
+				if err := srv.Shutdown(shutdownCtx); err != nil {
+					log.Printf("[http] graceful shutdown failed, forcing close: %v", err)
+					srv.Close()
+				}
 			}()
 
 			fmt.Printf("\nDashboard running at http://%s\n", cfg.Dashboard.Listen)
@@ -431,21 +436,32 @@ func loadAndValidateConfig() (config.EngagementConfig, error) {
 func resolvePublicIP() (string, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	// Use IPv4-only endpoints to ensure we get an IPv4 address
-	for _, url := range []string{"https://api.ipify.org", "https://ipv4.icanhazip.com", "https://ifconfig.me"} {
-		resp, err := client.Get(url)
-		if err != nil {
-			continue
-		}
-		defer resp.Body.Close()
-		buf := make([]byte, 64)
-		n, _ := resp.Body.Read(buf)
-		ip := strings.TrimSpace(string(buf[:n]))
-		parsed := net.ParseIP(ip)
-		if parsed != nil && parsed.To4() != nil {
+	for _, u := range []string{"https://api.ipify.org", "https://ipv4.icanhazip.com", "https://ifconfig.me"} {
+		ip, ok := tryResolveIPv4(client, u)
+		if ok {
 			return ip, nil
 		}
 	}
 	return "", fmt.Errorf("could not determine public IPv4 from any resolver")
+}
+
+// tryResolveIPv4 fetches a single resolver URL and closes the body
+// before returning so per-iteration body lifetimes are explicit and
+// connections are not leaked when later resolvers are tried.
+func tryResolveIPv4(client *http.Client, u string) (string, bool) {
+	resp, err := client.Get(u)
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	buf := make([]byte, 64)
+	n, _ := resp.Body.Read(buf)
+	ip := strings.TrimSpace(string(buf[:n]))
+	parsed := net.ParseIP(ip)
+	if parsed != nil && parsed.To4() != nil {
+		return ip, true
+	}
+	return "", false
 }
 
 func restartService(name string) error {

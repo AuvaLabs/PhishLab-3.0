@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -113,7 +114,8 @@ func (h *Handler) ListAllowed() ([]string, []string) {
 
 // AddAllowed adds an email or domain to the runtime allowlist and
 // persists it. An entry containing "@" is treated as an email;
-// otherwise as a domain.
+// otherwise as a domain. The on-disk snapshot is captured under the
+// same write-lock that mutated the in-memory lists.
 func (h *Handler) AddAllowed(entry string) error {
 	entry = strings.ToLower(strings.TrimSpace(entry))
 	if entry == "" {
@@ -125,8 +127,10 @@ func (h *Handler) AddAllowed(entry string) error {
 	} else {
 		h.runtimeDomains = mergeUnique(h.runtimeDomains, []string{entry})
 	}
+	emails := append([]string(nil), h.runtimeEmails...)
+	domains := append([]string(nil), h.runtimeDomains...)
 	h.mu.Unlock()
-	return h.persist()
+	return h.persist(emails, domains)
 }
 
 // RemoveAllowed removes an email or domain from the runtime allowlist.
@@ -144,8 +148,10 @@ func (h *Handler) RemoveAllowed(entry string) error {
 	} else {
 		h.runtimeDomains = removeFrom(h.runtimeDomains, entry)
 	}
+	emails := append([]string(nil), h.runtimeEmails...)
+	domains := append([]string(nil), h.runtimeDomains...)
 	h.mu.Unlock()
-	return h.persist()
+	return h.persist(emails, domains)
 }
 
 func removeFrom(list []string, target string) []string {
@@ -158,13 +164,18 @@ func removeFrom(list []string, target string) []string {
 	return out
 }
 
-func (h *Handler) persist() error {
+// persist writes the runtime allowlist to disk atomically. Callers
+// must pass a snapshot captured under the same write-lock that
+// mutated the lists, so the on-disk state is always a consistent
+// view rather than a re-read after the lock has been dropped.
+func (h *Handler) persist(emails, domains []string) error {
 	if h.cfg.AllowlistFile == "" {
 		return nil
 	}
-	h.mu.RLock()
-	body, _ := json.MarshalIndent(allowlistFile{Emails: h.runtimeEmails, Domains: h.runtimeDomains}, "", "  ")
-	h.mu.RUnlock()
+	body, err := json.MarshalIndent(allowlistFile{Emails: emails, Domains: domains}, "", "  ")
+	if err != nil {
+		return err
+	}
 	tmp := h.cfg.AllowlistFile + ".tmp"
 	if err := os.WriteFile(tmp, body, 0600); err != nil {
 		return err
@@ -217,7 +228,8 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	tok, err := h.oauth.Exchange(ctx, code)
 	if err != nil {
-		http.Error(w, "token exchange failed: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("[auth] oauth token exchange failed: %v", err)
+		http.Error(w, "token exchange failed", http.StatusInternalServerError)
 		return
 	}
 	client := h.oauth.Client(ctx, tok)

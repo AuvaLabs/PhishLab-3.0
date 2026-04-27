@@ -11,36 +11,29 @@ import (
 func NewRouter(api *handlers.APIHandler) http.Handler {
 	r := mux.NewRouter()
 
-	// API routes
 	apiRouter := r.PathPrefix("/api").Subrouter()
 	apiRouter.HandleFunc("/dashboard", api.HandleDashboard).Methods("GET")
 	apiRouter.HandleFunc("/credentials", api.HandleCredentials).Methods("GET")
 	apiRouter.HandleFunc("/services", api.HandleServices).Methods("GET")
 	apiRouter.HandleFunc("/phishlets", api.HandlePhishlets).Methods("GET")
 
-	// Campaign routes
 	apiRouter.HandleFunc("/campaigns", api.HandleGetCampaigns).Methods("GET")
 	apiRouter.HandleFunc("/campaigns", api.HandleLaunchCampaign).Methods("POST")
 	apiRouter.HandleFunc("/campaigns/sync", api.HandleSyncCampaigns).Methods("POST")
 
-	// Timeline routes
 	apiRouter.HandleFunc("/timeline", api.HandleGetTimeline).Methods("GET")
 
-	// Email template routes
 	apiRouter.HandleFunc("/templates", api.HandleGetTemplates).Methods("GET")
 	apiRouter.HandleFunc("/templates", api.HandleCreateTemplate).Methods("POST")
 	apiRouter.HandleFunc("/templates/{id:[0-9]+}", api.HandleDeleteTemplate).Methods("DELETE")
 
-	// WebSocket
 	r.HandleFunc("/ws", api.HandleWebSocket)
 
-	// Dashboard UI - inline HTML for zero-dependency deployment
 	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Write([]byte(dashboardHTML))
 	})
 
-	// Apply middleware
 	handler := middleware.RequestLogger(middleware.LocalhostOnly(r))
 	return handler
 }
@@ -50,300 +43,357 @@ const dashboardHTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Evilginx-Lab Dashboard</title>
+<title>PhishLab &mdash; Engagement Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
+:root{
+  --bg:#0d0d11;--bg2:#111116;--bg3:#16161d;
+  --border:#1e1e2a;--border2:#252535;
+  --cyan:#00d4ff;--cyan-dim:rgba(0,212,255,.08);--cyan-mid:rgba(0,212,255,.15);
+  --green:#00e676;--green-dim:rgba(0,230,118,.08);
+  --amber:#ffb300;--amber-dim:rgba(255,179,0,.08);
+  --red:#ff1744;--red-dim:rgba(255,23,68,.08);
+  --purple:#b388ff;--purple-dim:rgba(179,136,255,.08);
+  --text:#e0e0ee;--muted:#6b6b80;--muted2:#4a4a5a;
+}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0f;color:#e0e0e0;min-height:100vh}
-.container{max-width:1400px;margin:0 auto;padding:24px}
-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;padding-bottom:16px;border-bottom:1px solid #1a1a2e}
-h1{font-size:24px;color:#00d4ff;font-weight:600}
-.badge{background:#1a1a2e;padding:4px 12px;border-radius:12px;font-size:12px;color:#888}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:20px;margin-bottom:32px}
-.card{background:#12121a;border:1px solid #1a1a2e;border-radius:12px;padding:20px}
-.card h2{font-size:14px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:16px}
-.metric{font-size:36px;font-weight:700;color:#00d4ff}
-.metric.warning{color:#ff6b35}
-.service{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #1a1a2e}
-.service:last-child{border-bottom:none}
-.status{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px}
-.status.active{background:#00ff88}
-.status.inactive{background:#ff4444}
-.status.unknown{background:#888}
-table{width:100%;border-collapse:collapse}
-th,td{text-align:left;padding:10px 12px;border-bottom:1px solid #1a1a2e}
-th{color:#888;font-size:12px;text-transform:uppercase;letter-spacing:1px}
-td{font-size:14px}
-.empty{text-align:center;padding:40px;color:#555}
-#error-banner{display:none;background:#2a1a1a;border:1px solid #ff4444;color:#ff4444;padding:12px 20px;border-radius:8px;margin-bottom:20px}
-.tabs{display:flex;gap:8px;margin-bottom:20px}
-.tab{padding:8px 16px;background:#1a1a2e;border:1px solid #2a2a3e;border-radius:8px;cursor:pointer;color:#888;font-size:13px;transition:all 0.2s}
-.tab.active{background:#00d4ff22;border-color:#00d4ff;color:#00d4ff}
-.tab:hover{border-color:#00d4ff88}
-.tab-content{display:none}
-.tab-content.active{display:block}
-.event-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #1a1a2e;font-size:13px}
-.event-row:last-child{border-bottom:none}
-.event-icon{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
-.event-icon.email_sent{background:#1a3a2e;color:#00ff88}
-.event-icon.email_opened{background:#1a2a3e;color:#00aaff}
-.event-icon.link_clicked{background:#2a2a1e;color:#ffaa00}
-.event-icon.submitted_data{background:#2a1a2e;color:#ff66cc}
-.event-icon.credential_captured{background:#3a1a1a;color:#ff4444}
-.event-icon.campaign_launched{background:#1a1a3a;color:#aa88ff}
-.event-time{color:#555;min-width:140px}
-.event-detail{flex:1}
-.event-source{font-size:11px;padding:2px 6px;border-radius:4px;background:#1a1a2e;color:#666}
-.camp-status{padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
-.camp-status.launched{background:#1a3a2e;color:#00ff88}
-.camp-status.created{background:#1a2a3e;color:#00aaff}
-.camp-status.completed{background:#1a1a2e;color:#888}
-.camp-status.error{background:#3a1a1a;color:#ff4444}
-btn{display:inline-block;padding:8px 16px;background:#00d4ff22;border:1px solid #00d4ff;color:#00d4ff;border-radius:8px;cursor:pointer;font-size:13px;transition:all 0.2s}
-btn:hover{background:#00d4ff44}
-.btn{display:inline-block;padding:8px 16px;background:#00d4ff22;border:1px solid #00d4ff;color:#00d4ff;border-radius:8px;cursor:pointer;font-size:13px;transition:all 0.2s}
-.btn:hover{background:#00d4ff44}
-.btn.secondary{background:#1a1a2e;border-color:#2a2a3e;color:#888}
-.btn.secondary:hover{border-color:#00d4ff88;color:#00d4ff}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+.topbar{display:flex;align-items:center;gap:16px;padding:0 24px;height:56px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
+.logo{display:flex;align-items:center;gap:10px}
+.logo-icon{width:30px;height:30px;background:linear-gradient(135deg,var(--cyan),#0055ff);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px}
+.logo-text{font-size:15px;font-weight:700;letter-spacing:-.3px}
+.tb-div{width:1px;height:24px;background:var(--border2)}
+.eng-name{font-size:13px;font-weight:500;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.eng-id{font-size:11px;color:var(--muted);font-family:monospace}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.status-pill{display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.5px;text-transform:uppercase}
+.status-pill.active{background:var(--green-dim);border:1px solid rgba(0,230,118,.3);color:var(--green)}
+.status-pill.off{background:var(--bg3);border:1px solid var(--border2);color:var(--muted)}
+.pulse{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+.pulse.off{background:var(--muted);animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.sync-label{font-size:11px;color:var(--muted)}
+.btn-sync{padding:5px 14px;background:var(--cyan-dim);border:1px solid rgba(0,212,255,.3);color:var(--cyan);border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;transition:background .15s}
+.btn-sync:hover{background:var(--cyan-mid)}
+.main{padding:20px 24px;max-width:1640px;margin:0 auto}
+.err-banner{display:none;margin-bottom:16px;padding:12px 18px;border-radius:8px;background:var(--red-dim);border:1px solid rgba(255,23,68,.3);color:#ff6b6b;font-size:13px}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.mcard{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;display:flex;align-items:center;gap:16px}
+.micon{width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.micon.c{background:var(--cyan-dim)}.micon.g{background:var(--green-dim)}.micon.a{background:var(--amber-dim)}.micon.p{background:var(--purple-dim)}
+.mval{font-size:30px;font-weight:700;line-height:1}
+.mval.c{color:var(--cyan)}.mval.g{color:var(--green)}.mval.a{color:var(--amber)}.mval.p{color:var(--purple)}
+.mlbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-top:4px}
+.cgrid{display:grid;grid-template-columns:1fr 320px;gap:16px;margin-bottom:20px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.ch{display:flex;align-items:center;justify-content:space-between;padding:13px 18px;border-bottom:1px solid var(--border)}
+.ct{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:var(--muted)}
+.cb{padding:16px 18px}
+.chart-wrap{position:relative;height:230px}
+.rpanel{display:flex;flex-direction:column;gap:12px}
+.srow{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border)}
+.srow:last-child{border-bottom:none}
+.sname{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot.active{background:var(--green);box-shadow:0 0 6px rgba(0,230,118,.5)}
+.dot.inactive{background:var(--red)}.dot.unknown{background:var(--muted)}
+.sbadge{font-size:11px;padding:2px 8px;border-radius:4px;font-weight:500}
+.sbadge.active{color:var(--green);background:var(--green-dim)}
+.sbadge.inactive{color:var(--red);background:var(--red-dim)}
+.sbadge.unknown{color:var(--muted);background:var(--bg3)}
+.irow{display:flex;justify-content:space-between;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px}
+.irow:last-child{border-bottom:none}
+.ilbl{color:var(--muted)}.ival{color:var(--text);font-weight:500;text-align:right;max-width:170px;word-break:break-word}
+.ptags{display:flex;flex-wrap:wrap;gap:6px}
+.ptag{padding:3px 10px;border-radius:4px;font-size:11px;font-weight:500;background:var(--bg3);border:1px solid var(--border2);color:var(--muted)}
+.ptag.on{background:var(--cyan-dim);border-color:rgba(0,212,255,.3);color:var(--cyan)}
+.pbar{height:3px;background:var(--border);border-radius:2px;margin-top:10px;overflow:hidden}
+.pfill{height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:2px;transition:width .5s}
+.tabs-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.tabs-hdr{display:flex;border-bottom:1px solid var(--border);overflow-x:auto}
+.tbtn{padding:12px 20px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;transition:color .15s,border-color .15s}
+.tbtn:hover{color:var(--text)}.tbtn.active{color:var(--cyan);border-bottom-color:var(--cyan)}
+.tpane{display:none}.tpane.active{display:block}
+.feed{max-height:440px;overflow-y:auto}
+.tev{display:flex;align-items:flex-start;gap:12px;padding:11px 18px;border-bottom:1px solid var(--border);transition:background .1s}
+.tev:hover{background:var(--bg3)}.tev:last-child{border-bottom:none}
+.tico{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;margin-top:1px}
+.tico.email_sent{background:var(--bg3);color:var(--muted)}
+.tico.email_opened{background:rgba(0,212,255,.1);color:var(--cyan)}
+.tico.link_clicked{background:var(--amber-dim);color:var(--amber)}
+.tico.submitted_data{background:rgba(255,100,100,.1);color:#ff6464}
+.tico.credential_captured{background:var(--red-dim);color:var(--red);border:1px solid rgba(255,23,68,.3)}
+.tico.campaign_launched{background:var(--purple-dim);color:var(--purple)}
+.tico.def{background:var(--bg3);color:var(--muted)}
+.tbody2{flex:1;min-width:0}
+.ttype{font-size:12px;font-weight:600;margin-bottom:3px}
+.ttype.credential_captured{color:var(--red)}.ttype.link_clicked{color:var(--amber)}
+.ttype.email_opened{color:var(--cyan)}.ttype.submitted_data{color:#ff6464}
+.tmeta{font-size:11px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.tsrc{padding:1px 6px;border-radius:3px;background:var(--bg3);border:1px solid var(--border2);color:var(--muted2);font-size:10px}
+.ttime{margin-left:auto;font-size:11px;color:var(--muted2);white-space:nowrap;flex-shrink:0;padding-top:2px}
+.dtable{width:100%;border-collapse:collapse}
+.dtable th{padding:10px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted);border-bottom:1px solid var(--border);background:var(--bg)}
+.dtable td{padding:11px 14px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
+.dtable tr:last-child td{border-bottom:none}
+.dtable tr:hover td{background:rgba(255,255,255,.015)}
+.mono{font-family:'SF Mono','Fira Code',monospace;font-size:12px}
+.code-c{color:var(--cyan)}.code-a{color:var(--amber)}
+.mip{font-family:monospace;font-size:11px;color:var(--muted)}
+.cbadge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.cbadge.launched{background:var(--green-dim);color:var(--green);border:1px solid rgba(0,230,118,.3)}
+.cbadge.created{background:var(--cyan-dim);color:var(--cyan);border:1px solid rgba(0,212,255,.3)}
+.cbadge.completed{background:var(--bg3);color:var(--muted);border:1px solid var(--border2)}
+.cbadge.error{background:var(--red-dim);color:var(--red);border:1px solid rgba(255,23,68,.3)}
+.empty{text-align:center;padding:48px 20px;color:var(--muted);font-size:13px}
+.empty-ico{font-size:32px;margin-bottom:12px;opacity:.35}
+.btn-del{padding:3px 10px;background:var(--red-dim);border:1px solid rgba(255,23,68,.3);color:var(--red);border-radius:4px;cursor:pointer;font-size:11px}
+.btn-del:hover{background:rgba(255,23,68,.2)}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:var(--bg2)}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+@media(max-width:1100px){.metrics{grid-template-columns:repeat(2,1fr)}.cgrid{grid-template-columns:1fr}}
+@media(max-width:600px){.metrics{grid-template-columns:1fr 1fr}.topbar{padding:0 16px}.main{padding:14px}}
 </style>
 </head>
 <body>
-<div class="container">
-<header>
-<h1>Evilginx-Lab</h1>
-<span class="badge" id="engagement-badge">No engagement loaded</span>
-</header>
-<div id="error-banner"></div>
-<div class="grid">
-<div class="card">
-<h2>Captured Credentials</h2>
-<div class="metric" id="cred-count">--</div>
+<div class="topbar">
+  <div class="logo">
+    <div class="logo-icon">&#x1F41F;</div>
+    <span class="logo-text">PhishLab</span>
+  </div>
+  <div class="tb-div"></div>
+  <div>
+    <div class="eng-name" id="eng-name">Connecting&hellip;</div>
+    <div class="eng-id" id="eng-id"></div>
+  </div>
+  <div class="tb-right">
+    <div class="status-pill off" id="spill"><div class="pulse off" id="spulse"></div><span id="stext">&#x2014;</span></div>
+    <span class="sync-label" id="sync-lbl"></span>
+    <button class="btn-sync" onclick="sync()">&#x21BB;&nbsp;Sync</button>
+  </div>
 </div>
-<div class="card">
-<h2>Campaigns</h2>
-<div class="metric" id="campaign-count">--</div>
-</div>
-<div class="card">
-<h2>Services</h2>
-<div id="services-list"></div>
-</div>
-<div class="card">
-<h2>Phishlets</h2>
-<div id="phishlets-list"></div>
-</div>
-</div>
-
-<div class="tabs">
-<div class="tab active" data-tab="timeline">Timeline</div>
-<div class="tab" data-tab="credentials">Credentials</div>
-<div class="tab" data-tab="campaigns">Campaigns</div>
-<div class="tab" data-tab="templates">Templates</div>
-</div>
-
-<div class="tab-content active" id="tab-timeline">
-<div class="card">
-<h2>Campaign Timeline <button class="btn secondary" style="float:right;font-size:11px;padding:4px 10px" onclick="syncCampaigns()">Sync</button></h2>
-<div id="timeline-list"><div class="empty">No events yet</div></div>
-</div>
-</div>
-
-<div class="tab-content" id="tab-credentials">
-<div class="card">
-<h2>Captured Credentials</h2>
-<table>
-<thead><tr><th>Time</th><th>Phishlet</th><th>Username</th><th>Password</th><th>Source IP</th></tr></thead>
-<tbody id="creds-table"><tr><td colspan="5" class="empty">No credentials captured yet</td></tr></tbody>
-</table>
-</div>
-</div>
-
-<div class="tab-content" id="tab-campaigns">
-<div class="card">
-<h2>Campaigns</h2>
-<table>
-<thead><tr><th>Name</th><th>Status</th><th>Targets</th><th>Template</th><th>URL</th><th>Launched</th></tr></thead>
-<tbody id="campaigns-table"><tr><td colspan="6" class="empty">No campaigns yet</td></tr></tbody>
-</table>
-</div>
-</div>
-
-<div class="tab-content" id="tab-templates">
-<div class="card">
-<h2>Email Templates</h2>
-<table>
-<thead><tr><th>ID</th><th>Name</th><th>Subject</th><th>Actions</th></tr></thead>
-<tbody id="templates-table"><tr><td colspan="4" class="empty">No templates found</td></tr></tbody>
-</table>
-</div>
-</div>
-
+<div class="main">
+  <div class="err-banner" id="err"></div>
+  <div class="metrics">
+    <div class="mcard"><div class="micon c">&#x1F511;</div><div><div class="mval c" id="m0">0</div><div class="mlbl">Credentials Captured</div></div></div>
+    <div class="mcard"><div class="micon g">&#x1F4E7;</div><div><div class="mval g" id="m1">0</div><div class="mlbl">Campaigns</div></div></div>
+    <div class="mcard"><div class="micon a">&#x26A1;</div><div><div class="mval a" id="m2">0</div><div class="mlbl">Timeline Events</div></div></div>
+    <div class="mcard"><div class="micon p">&#x2699;</div><div><div class="mval p" id="m3">0/3</div><div class="mlbl">Services Online</div></div></div>
+  </div>
+  <div class="cgrid">
+    <div class="card">
+      <div class="ch"><span class="ct">Campaign Funnel</span><span style="font-size:11px;color:var(--muted)">Across all campaigns</span></div>
+      <div class="cb"><div class="chart-wrap"><canvas id="fchart"></canvas></div></div>
+    </div>
+    <div class="rpanel">
+      <div class="card">
+        <div class="ch"><span class="ct">Services</span></div>
+        <div class="cb" style="padding-top:4px;padding-bottom:4px" id="svc-list"></div>
+      </div>
+      <div class="card">
+        <div class="ch"><span class="ct">Engagement</span></div>
+        <div class="cb" style="padding-top:4px;padding-bottom:4px" id="eng-info"></div>
+      </div>
+      <div class="card">
+        <div class="ch"><span class="ct">Phishlets</span></div>
+        <div class="cb"><div class="ptags" id="ptags"></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="tabs-wrap">
+    <div class="tabs-hdr">
+      <div class="tbtn active" data-tab="timeline">&#x23F1; Timeline</div>
+      <div class="tbtn" data-tab="credentials">&#x1F511; Credentials</div>
+      <div class="tbtn" data-tab="campaigns">&#x1F4CB; Campaigns</div>
+      <div class="tbtn" data-tab="templates">&#x2709; Templates</div>
+    </div>
+    <div class="tpane active" id="tab-timeline">
+      <div class="feed" id="feed"><div class="empty"><div class="empty-ico">&#x23F3;</div>No events yet</div></div>
+    </div>
+    <div class="tpane" id="tab-credentials">
+      <div style="overflow-x:auto">
+        <table class="dtable">
+          <thead><tr><th>Captured</th><th>Phishlet</th><th>Username</th><th>Password</th><th>Source IP</th><th>User Agent</th></tr></thead>
+          <tbody id="creds-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="tpane" id="tab-campaigns">
+      <div style="overflow-x:auto">
+        <table class="dtable">
+          <thead><tr><th>Campaign</th><th>Status</th><th>Targets</th><th>Template</th><th>Phish URL</th><th>Launched</th></tr></thead>
+          <tbody id="camp-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="tpane" id="tab-templates">
+      <div style="overflow-x:auto">
+        <table class="dtable">
+          <thead><tr><th>ID</th><th>Name</th><th>Subject</th><th></th></tr></thead>
+          <tbody id="tmpl-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </div>
 <script>
-const $ = s => document.querySelector(s);
-const $$ = s => document.querySelectorAll(s);
+var chart=null;
+function esc(s){if(!s)return'';var d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
+function fmt(ts){if(!ts||ts==='0001-01-01T00:00:00Z')return'&mdash;';var d=new Date(ts);return d.toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});}
+function fmtFull(ts){if(!ts||ts==='0001-01-01T00:00:00Z')return'&mdash;';return new Date(ts).toLocaleString();}
 
-// Tab switching
-$$('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    $$('.tab').forEach(t => t.classList.remove('active'));
-    $$('.tab-content').forEach(c => c.classList.remove('active'));
-    tab.classList.add('active');
-    $('#tab-' + tab.dataset.tab).classList.add('active');
-    if (tab.dataset.tab === 'templates') fetchTemplates();
+document.querySelectorAll('.tbtn').forEach(function(b){
+  b.addEventListener('click',function(){
+    document.querySelectorAll('.tbtn').forEach(function(x){x.classList.remove('active');});
+    document.querySelectorAll('.tpane').forEach(function(x){x.classList.remove('active');});
+    b.classList.add('active');
+    document.getElementById('tab-'+b.dataset.tab).classList.add('active');
+    if(b.dataset.tab==='templates')loadTemplates();
   });
 });
 
-async function fetchDashboard() {
-  try {
-    const res = await fetch('/api/dashboard');
-    if (!res.ok) throw new Error('API returned ' + res.status);
-    const data = await res.json();
-    render(data);
-    $('#error-banner').style.display = 'none';
-  } catch (err) {
-    $('#error-banner').textContent = 'Dashboard API error: ' + err.message;
-    $('#error-banner').style.display = 'block';
-  }
-}
-
-function render(d) {
-  if (d.engagement) {
-    $('#engagement-badge').textContent = d.engagement.name + ' (' + d.engagement.status + ')';
-  }
-  $('#cred-count').textContent = d.credential_count || 0;
-  $('#campaign-count').textContent = d.campaign_count || 0;
-
-  // Services
-  let shtml = '';
-  (d.services || []).forEach(s => {
-    const cls = s.status === 'active' ? 'active' : (s.status === 'inactive' ? 'inactive' : 'unknown');
-    shtml += '<div class="service"><span><span class="status ' + cls + '"></span>' + s.name + '</span><span>' + s.status + '</span></div>';
-  });
-  $('#services-list').innerHTML = shtml || '<div class="empty">No services found</div>';
-
-  // Phishlets
-  let phtml = '';
-  (d.phishlets || []).forEach(p => {
-    phtml += '<div class="service"><span>' + p.name + '</span><span>' + (p.enabled ? 'enabled' : 'available') + '</span></div>';
-  });
-  $('#phishlets-list').innerHTML = phtml || '<div class="empty">No phishlets found</div>';
-
-  // Credentials table
-  renderCredentials(d.credentials || []);
-
-  // Campaigns table
-  renderCampaigns(d.campaigns || []);
-
-  // Timeline
-  renderTimeline(d.timeline || []);
-}
-
-function renderCredentials(creds) {
-  if (creds.length === 0) {
-    $('#creds-table').innerHTML = '<tr><td colspan="5" class="empty">No credentials captured yet</td></tr>';
-  } else {
-    let rows = '';
-    creds.forEach(c => {
-      const t = new Date(c.captured_at).toLocaleString();
-      rows += '<tr><td>' + t + '</td><td>' + esc(c.phishlet) + '</td><td>' + esc(c.username) + '</td><td>' + esc(c.password) + '</td><td>' + esc(c.remote_addr) + '</td></tr>';
-    });
-    $('#creds-table').innerHTML = rows;
-  }
-}
-
-function renderCampaigns(campaigns) {
-  if (campaigns.length === 0) {
-    $('#campaigns-table').innerHTML = '<tr><td colspan="6" class="empty">No campaigns yet</td></tr>';
-  } else {
-    let rows = '';
-    campaigns.forEach(c => {
-      const t = new Date(c.launched_at).toLocaleString();
-      rows += '<tr><td>' + esc(c.name) + '</td><td><span class="camp-status ' + esc(c.status) + '">' + esc(c.status) + '</span></td><td>' + c.target_count + '</td><td>' + esc(c.template_name) + '</td><td>' + esc(c.phish_url) + '</td><td>' + t + '</td></tr>';
-    });
-    $('#campaigns-table').innerHTML = rows;
-  }
-}
-
-const eventIcons = {
-  email_sent: '\u2709',
-  email_opened: '\uD83D\uDC41',
-  link_clicked: '\uD83D\uDD17',
-  submitted_data: '\uD83D\uDCDD',
-  credential_captured: '\uD83D\uDD11',
-  campaign_launched: '\uD83D\uDE80',
-  target_status: '\uD83C\uDFAF',
-  email_reported: '\u26A0',
-  unknown: '\u2022'
-};
-
-function renderTimeline(events) {
-  if (events.length === 0) {
-    $('#timeline-list').innerHTML = '<div class="empty">No events yet</div>';
-    return;
-  }
-  let html = '';
-  events.forEach(e => {
-    const t = new Date(e.timestamp).toLocaleString();
-    const icon = eventIcons[e.event_type] || '\u2022';
-    const email = e.email ? ' &middot; ' + esc(e.email) : '';
-    html += '<div class="event-row">' +
-      '<div class="event-icon ' + esc(e.event_type) + '">' + icon + '</div>' +
-      '<div class="event-time">' + t + '</div>' +
-      '<div class="event-detail">' + esc(e.event_type.replace(/_/g, ' ')) + email +
-      (e.detail ? ' &middot; ' + esc(e.detail) : '') + '</div>' +
-      '<div class="event-source">' + esc(e.source) + '</div>' +
-      '</div>';
-  });
-  $('#timeline-list').innerHTML = html;
-}
-
-async function fetchTemplates() {
-  try {
-    const res = await fetch('/api/templates');
-    if (!res.ok) return;
-    const templates = await res.json();
-    if (templates.length === 0) {
-      $('#templates-table').innerHTML = '<tr><td colspan="4" class="empty">No templates found</td></tr>';
-      return;
+function initChart(){
+  var ctx=document.getElementById('fchart').getContext('2d');
+  chart=new Chart(ctx,{
+    type:'bar',
+    data:{
+      labels:['Sent','Opened','Clicked','Submitted','Captured'],
+      datasets:[{
+        data:[0,0,0,0,0],
+        backgroundColor:['rgba(100,100,130,.5)','rgba(0,212,255,.5)','rgba(255,179,0,.5)','rgba(255,100,100,.5)','rgba(255,23,68,.65)'],
+        borderColor:['rgba(100,100,130,.9)','rgba(0,212,255,.9)','rgba(255,179,0,.9)','rgba(255,100,100,.9)','rgba(255,23,68,.9)'],
+        borderWidth:1,borderRadius:4,borderSkipped:false
+      }]
+    },
+    options:{
+      indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return'  '+c.parsed.x+' targets';}}}},
+      scales:{
+        x:{ticks:{color:'#6b6b80',font:{size:11}},grid:{color:'rgba(30,30,42,.9)'},border:{color:'#1e1e2a'}},
+        y:{ticks:{color:'#9090a8',font:{size:12,weight:'600'}},grid:{display:false},border:{display:false}}
+      }
     }
-    let rows = '';
-    templates.forEach(t => {
-      rows += '<tr><td>' + t.id + '</td><td>' + esc(t.name) + '</td><td>' + esc(t.subject || '') + '</td><td><button class="btn secondary" style="font-size:11px;padding:2px 8px" onclick="deleteTemplate(' + t.id + ')">Delete</button></td></tr>';
-    });
-    $('#templates-table').innerHTML = rows;
-  } catch (err) {}
+  });
 }
 
-async function deleteTemplate(id) {
-  if (!confirm('Delete template #' + id + '?')) return;
-  await fetch('/api/templates/' + id, { method: 'DELETE' });
-  fetchTemplates();
+function updateChart(timeline,credCount){
+  if(!chart)return;
+  var c={email_sent:0,email_opened:0,link_clicked:0,submitted_data:0};
+  (timeline||[]).forEach(function(e){if(c[e.event_type]!==undefined)c[e.event_type]++;});
+  chart.data.datasets[0].data=[c.email_sent,c.email_opened,c.link_clicked,c.submitted_data,credCount||0];
+  chart.update();
 }
 
-async function syncCampaigns() {
-  try {
-    await fetch('/api/campaigns/sync', { method: 'POST' });
-    fetchDashboard();
-  } catch (err) {}
+function render(d){
+  var eng=d.engagement;
+  var pill=document.getElementById('spill'),pulse=document.getElementById('spulse'),st=document.getElementById('stext');
+  if(eng&&eng.status==='active'){pill.className='status-pill active';pulse.className='pulse';st.textContent='Active';}
+  else{pill.className='status-pill off';pulse.className='pulse off';st.textContent=eng?eng.status:'No Engagement';}
+  document.getElementById('eng-name').textContent=eng?eng.name:'No engagement loaded';
+  document.getElementById('eng-id').textContent=eng?eng.id:'';
+  document.getElementById('m0').textContent=d.credential_count||0;
+  document.getElementById('m1').textContent=d.campaign_count||0;
+  document.getElementById('m2').textContent=(d.timeline||[]).length;
+  var up=(d.services||[]).filter(function(s){return s.status==='active';}).length;
+  document.getElementById('m3').textContent=up+'/'+(d.services||[]).length;
+
+  var sh='';
+  (d.services||[]).forEach(function(s){
+    var c=s.status==='active'?'active':(s.status==='inactive'?'inactive':'unknown');
+    sh+='<div class="srow"><span class="sname"><span class="dot '+c+'"></span>'+esc(s.name)+'</span><span class="sbadge '+c+'">'+esc(s.status)+'</span></div>';
+  });
+  document.getElementById('svc-list').innerHTML=sh||'<div style="padding:10px 0;color:var(--muted);font-size:12px">No services</div>';
+
+  if(eng){
+    var progress=0;
+    if(eng.start_date&&eng.end_date){
+      var s2=new Date(eng.start_date).getTime(),e2=new Date(eng.end_date).getTime(),now=Date.now();
+      progress=Math.min(100,Math.max(0,Math.round((now-s2)/(e2-s2)*100)));
+    }
+    document.getElementById('eng-info').innerHTML=
+      '<div class="irow"><span class="ilbl">Client</span><span class="ival">'+esc(eng.client)+'</span></div>'+
+      '<div class="irow"><span class="ilbl">Operator</span><span class="ival">'+esc(eng.operator)+'</span></div>'+
+      '<div class="irow"><span class="ilbl">Domain</span><span class="ival">'+esc(eng.domain)+'</span></div>'+
+      '<div class="irow"><span class="ilbl">Window</span><span class="ival">'+esc(eng.start_date)+' &rarr; '+esc(eng.end_date)+'</span></div>'+
+      '<div class="pbar"><div class="pfill" style="width:'+progress+'%"></div></div>';
+  }
+
+  var pt='';
+  (d.phishlets||[]).forEach(function(p){pt+='<span class="ptag'+(p.enabled?' on':'')+'">'+esc(p.name)+'</span>';});
+  document.getElementById('ptags').innerHTML=pt||'<span style="font-size:12px;color:var(--muted)">None loaded</span>';
+
+  renderTimeline(d.timeline||[]);
+  renderCreds(d.credentials||[]);
+  renderCamps(d.campaigns||[]);
+  updateChart(d.timeline,d.credential_count);
+  document.getElementById('sync-lbl').textContent='Synced '+new Date().toLocaleTimeString();
 }
 
-function esc(s) {
-  if (!s) return '';
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
+var eIcons={email_sent:'&#x2709;',email_opened:'&#x1F441;',link_clicked:'&#x1F517;',submitted_data:'&#x1F4DD;',credential_captured:'&#x1F511;',campaign_launched:'&#x1F680;',target_status:'&#x1F3AF;',email_reported:'&#x26A0;'};
+var eLabels={email_sent:'Email Sent',email_opened:'Email Opened',link_clicked:'Link Clicked',submitted_data:'Data Submitted',credential_captured:'Credential Captured',campaign_launched:'Campaign Launched',target_status:'Target Update',email_reported:'Email Reported'};
+
+function renderTimeline(evts){
+  if(!evts.length){document.getElementById('feed').innerHTML='<div class="empty"><div class="empty-ico">&#x23F3;</div>No events yet &mdash; run a campaign to see the live feed.</div>';return;}
+  var html='';
+  evts.forEach(function(e){
+    var cls=e.event_type||'def';
+    var icon=eIcons[e.event_type]||'&#x2022;';
+    var lbl=eLabels[e.event_type]||e.event_type;
+    var meta='';
+    if(e.email)meta+='<span>'+esc(e.email)+'</span>';
+    if(e.remote_addr)meta+='<span>'+esc(e.remote_addr)+'</span>';
+    if(e.detail)meta+='<span>'+esc(e.detail)+'</span>';
+    html+='<div class="tev"><div class="tico '+cls+'">'+icon+'</div><div class="tbody2"><div class="ttype '+cls+'">'+lbl+'</div><div class="tmeta"><span class="tsrc">'+esc(e.source)+'</span>'+meta+'</div></div><div class="ttime">'+fmt(e.timestamp)+'</div></div>';
+  });
+  document.getElementById('feed').innerHTML=html;
 }
 
-// WebSocket for real-time updates
-function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(proto + '//' + location.host + '/ws');
-  ws.onmessage = () => fetchDashboard();
-  ws.onclose = () => setTimeout(connectWS, 3000);
+function renderCreds(creds){
+  if(!creds.length){document.getElementById('creds-body').innerHTML='<tr><td colspan="6"><div class="empty"><div class="empty-ico">&#x1F511;</div>No credentials captured yet</div></td></tr>';return;}
+  var rows='';
+  creds.forEach(function(c){
+    rows+='<tr><td style="white-space:nowrap;color:var(--muted)">'+fmtFull(c.captured_at)+'</td><td><span class="ptag on">'+esc(c.phishlet)+'</span></td><td><span class="mono code-c">'+esc(c.username)+'</span></td><td><span class="mono code-a">'+esc(c.password)+'</span></td><td><span class="mip">'+esc(c.remote_addr)+'</span></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px">'+esc(c.user_agent)+'</td></tr>';
+  });
+  document.getElementById('creds-body').innerHTML=rows;
 }
 
-fetchDashboard();
-setInterval(fetchDashboard, 10000);
-connectWS();
+function renderCamps(camps){
+  if(!camps.length){document.getElementById('camp-body').innerHTML='<tr><td colspan="6"><div class="empty"><div class="empty-ico">&#x1F4CB;</div>No campaigns yet</div></td></tr>';return;}
+  var rows='';
+  camps.forEach(function(c){
+    rows+='<tr><td><strong>'+esc(c.name)+'</strong></td><td><span class="cbadge '+esc(c.status)+'">'+esc(c.status)+'</span></td><td>'+c.target_count+'</td><td>'+esc(c.template_name)+'</td><td style="font-family:monospace;font-size:11px;color:var(--muted)">'+esc(c.phish_url)+'</td><td style="white-space:nowrap;color:var(--muted)">'+fmt(c.launched_at)+'</td></tr>';
+  });
+  document.getElementById('camp-body').innerHTML=rows;
+}
+
+function loadTemplates(){
+  fetch('/api/templates').then(function(r){return r.json();}).then(function(tmps){
+    if(!tmps||!tmps.length){document.getElementById('tmpl-body').innerHTML='<tr><td colspan="4"><div class="empty"><div class="empty-ico">&#x2709;</div>No templates</div></td></tr>';return;}
+    var rows='';
+    tmps.forEach(function(t){rows+='<tr><td style="color:var(--muted);font-family:monospace">'+t.id+'</td><td><strong>'+esc(t.name)+'</strong></td><td style="color:var(--muted)">'+esc(t.subject||'')+'</td><td><button class="btn-del" onclick="delTmpl('+t.id+')">Delete</button></td></tr>';});
+    document.getElementById('tmpl-body').innerHTML=rows;
+  }).catch(function(){});
+}
+
+function delTmpl(id){if(!confirm('Delete template #'+id+'?'))return;fetch('/api/templates/'+id,{method:'DELETE'}).then(loadTemplates);}
+function sync(){fetch('/api/campaigns/sync',{method:'POST'}).then(load).catch(function(){});}
+
+function load(){
+  fetch('/api/dashboard')
+    .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+    .then(function(d){render(d);document.getElementById('err').style.display='none';})
+    .catch(function(e){var b=document.getElementById('err');b.textContent='Dashboard API error: '+e.message;b.style.display='block';});
+}
+
+function connectWS(){
+  var proto=location.protocol==='https:'?'wss:':'ws:';
+  var ws=new WebSocket(proto+'//'+location.host+'/ws');
+  ws.onmessage=function(){load();};
+  ws.onclose=function(){setTimeout(connectWS,3000);};
+}
+
+initChart();load();setInterval(load,15000);connectWS();
 </script>
 </body>
 </html>`

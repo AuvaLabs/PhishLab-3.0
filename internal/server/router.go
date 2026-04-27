@@ -27,6 +27,11 @@ func NewRouter(api *handlers.APIHandler) http.Handler {
 	apiRouter.HandleFunc("/templates", api.HandleCreateTemplate).Methods("POST")
 	apiRouter.HandleFunc("/templates/{id:[0-9]+}", api.HandleDeleteTemplate).Methods("DELETE")
 
+	r.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
+	}).Methods("GET")
+
 	r.HandleFunc("/ws", api.HandleWebSocket)
 
 	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +49,12 @@ const dashboardHTML = `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PhishLab &mdash; Engagement Dashboard</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2300d4ff'/%3E%3Ctext x='50%25' y='56%25' text-anchor='middle' font-family='Arial' font-size='38' font-weight='700' fill='%230d0d11'%3EP%3C/text%3E%3C/svg%3E">
+<script
+  src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
+  integrity="sha384-fnbX44GdY9gNN8L17Y2bW+T0tc/0Cmv4dXyNhDmw6T0HYlc0z5UIQGqEzlkdLwQM"
+  crossorigin="anonymous"
+  referrerpolicy="no-referrer"></script>
 <style>
 :root{
   --bg:#0d0d11;--bg2:#111116;--bg3:#16161d;
@@ -55,9 +65,13 @@ const dashboardHTML = `<!DOCTYPE html>
   --red:#ff1744;--red-dim:rgba(255,23,68,.08);
   --purple:#b388ff;--purple-dim:rgba(179,136,255,.08);
   --text:#e0e0ee;--muted:#6b6b80;--muted2:#4a4a5a;
+  --focus:#7cdfff;
 }
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+.skip-link{position:absolute;left:-9999px;top:8px;background:var(--cyan);color:var(--bg);padding:8px 14px;border-radius:6px;font-weight:600;z-index:200}
+.skip-link:focus{left:8px}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
 .topbar{display:flex;align-items:center;gap:16px;padding:0 24px;height:56px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
 .logo{display:flex;align-items:center;gap:10px}
 .logo-icon{width:30px;height:30px;background:linear-gradient(135deg,var(--cyan),#0055ff);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px}
@@ -72,9 +86,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .pulse{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
 .pulse.off{background:var(--muted);animation:none}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@media (prefers-reduced-motion: reduce){.pulse{animation:none}}
 .sync-label{font-size:11px;color:var(--muted)}
-.btn-sync{padding:5px 14px;background:var(--cyan-dim);border:1px solid rgba(0,212,255,.3);color:var(--cyan);border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;transition:background .15s}
-.btn-sync:hover{background:var(--cyan-mid)}
+.btn-sync{padding:5px 14px;background:var(--cyan-dim);border:1px solid rgba(0,212,255,.3);color:var(--cyan);border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;transition:background .15s;font-family:inherit}
+.btn-sync:hover,.btn-sync:focus-visible{background:var(--cyan-mid)}
+.btn-sync[aria-busy="true"]{opacity:.6;cursor:wait}
 .main{padding:20px 24px;max-width:1640px;margin:0 auto}
 .err-banner{display:none;margin-bottom:16px;padding:12px 18px;border-radius:8px;background:var(--red-dim);border:1px solid rgba(255,23,68,.3);color:#ff6b6b;font-size:13px}
 .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
@@ -84,6 +100,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .mval{font-size:30px;font-weight:700;line-height:1}
 .mval.c{color:var(--cyan)}.mval.g{color:var(--green)}.mval.a{color:var(--amber)}.mval.p{color:var(--purple)}
 .mlbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-top:4px}
+.skel{display:inline-block;height:1em;width:2.5ch;background:linear-gradient(90deg,var(--bg3) 0%,var(--border2) 50%,var(--bg3) 100%);background-size:200% 100%;animation:shimmer 1.4s infinite;border-radius:3px;color:transparent}
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+@media (prefers-reduced-motion: reduce){.skel{animation:none;background:var(--bg3)}}
 .cgrid{display:grid;grid-template-columns:1fr 320px;gap:16px;margin-bottom:20px}
 .card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden}
 .ch{display:flex;align-items:center;justify-content:space-between;padding:13px 18px;border-bottom:1px solid var(--border)}
@@ -111,8 +130,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .pfill{height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:2px;transition:width .5s}
 .tabs-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden}
 .tabs-hdr{display:flex;border-bottom:1px solid var(--border);overflow-x:auto}
-.tbtn{padding:12px 20px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;transition:color .15s,border-color .15s}
-.tbtn:hover{color:var(--text)}.tbtn.active{color:var(--cyan);border-bottom-color:var(--cyan)}
+.tbtn{padding:12px 20px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;transition:color .15s,border-color .15s;background:transparent;border-top:none;border-left:none;border-right:none;font-family:inherit}
+.tbtn:hover,.tbtn:focus-visible{color:var(--text)}
+.tbtn[aria-selected="true"]{color:var(--cyan);border-bottom-color:var(--cyan)}
 .tpane{display:none}.tpane.active{display:block}
 .feed{max-height:440px;overflow-y:auto}
 .tev{display:flex;align-items:flex-start;gap:12px;padding:11px 18px;border-bottom:1px solid var(--border);transition:background .1s}
@@ -147,44 +167,47 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .cbadge.error{background:var(--red-dim);color:var(--red);border:1px solid rgba(255,23,68,.3)}
 .empty{text-align:center;padding:48px 20px;color:var(--muted);font-size:13px}
 .empty-ico{font-size:32px;margin-bottom:12px;opacity:.35}
-.btn-del{padding:3px 10px;background:var(--red-dim);border:1px solid rgba(255,23,68,.3);color:var(--red);border-radius:4px;cursor:pointer;font-size:11px}
-.btn-del:hover{background:rgba(255,23,68,.2)}
+.btn-del{padding:3px 10px;background:var(--red-dim);border:1px solid rgba(255,23,68,.3);color:var(--red);border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit}
+.btn-del:hover,.btn-del:focus-visible{background:rgba(255,23,68,.2)}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:var(--bg2)}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
 @media(max-width:1100px){.metrics{grid-template-columns:repeat(2,1fr)}.cgrid{grid-template-columns:1fr}}
-@media(max-width:600px){.metrics{grid-template-columns:1fr 1fr}.topbar{padding:0 16px}.main{padding:14px}}
+@media(max-width:760px){.eng-name{max-width:140px}.tb-right .sync-label{display:none}.main{padding:14px}.tbtn{padding:10px 14px}.chart-wrap{height:200px}}
+@media(max-width:480px){.metrics{grid-template-columns:1fr 1fr}.mval{font-size:24px}.topbar{padding:0 12px;gap:10px}.logo-text{display:none}}
 </style>
 </head>
 <body>
-<div class="topbar">
+<a class="skip-link" href="#main">Skip to main content</a>
+<header class="topbar" role="banner">
   <div class="logo">
-    <div class="logo-icon">&#x1F41F;</div>
+    <div class="logo-icon" aria-hidden="true">&#x1F41F;</div>
     <span class="logo-text">PhishLab</span>
   </div>
-  <div class="tb-div"></div>
+  <div class="tb-div" aria-hidden="true"></div>
   <div>
     <div class="eng-name" id="eng-name">Connecting&hellip;</div>
-    <div class="eng-id" id="eng-id"></div>
+    <div class="eng-id" id="eng-id" aria-label="Engagement ID"></div>
   </div>
   <div class="tb-right">
-    <div class="status-pill off" id="spill"><div class="pulse off" id="spulse"></div><span id="stext">&#x2014;</span></div>
+    <div class="status-pill off" id="spill" role="status" aria-live="polite" aria-label="Engagement status"><div class="pulse off" id="spulse" aria-hidden="true"></div><span id="stext">&#x2014;</span></div>
     <span class="sync-label" id="sync-lbl"></span>
-    <button class="btn-sync" onclick="sync()">&#x21BB;&nbsp;Sync</button>
+    <button class="btn-sync" id="btn-sync" type="button" onclick="sync()" aria-label="Sync campaign data from Gophish">&#x21BB;&nbsp;Sync</button>
   </div>
-</div>
-<div class="main">
-  <div class="err-banner" id="err"></div>
-  <div class="metrics">
-    <div class="mcard"><div class="micon c">&#x1F511;</div><div><div class="mval c" id="m0">0</div><div class="mlbl">Credentials Captured</div></div></div>
-    <div class="mcard"><div class="micon g">&#x1F4E7;</div><div><div class="mval g" id="m1">0</div><div class="mlbl">Campaigns</div></div></div>
-    <div class="mcard"><div class="micon a">&#x26A1;</div><div><div class="mval a" id="m2">0</div><div class="mlbl">Timeline Events</div></div></div>
-    <div class="mcard"><div class="micon p">&#x2699;</div><div><div class="mval p" id="m3">0/3</div><div class="mlbl">Services Online</div></div></div>
-  </div>
-  <div class="cgrid">
+</header>
+<main class="main" id="main">
+  <div class="err-banner" id="err" role="alert"></div>
+  <section class="metrics" aria-label="Key metrics">
+    <div class="mcard"><div class="micon c" aria-hidden="true">&#x1F511;</div><div><div class="mval c" id="m0"><span class="skel">000</span></div><div class="mlbl">Credentials Captured</div></div></div>
+    <div class="mcard"><div class="micon g" aria-hidden="true">&#x1F4E7;</div><div><div class="mval g" id="m1"><span class="skel">000</span></div><div class="mlbl">Campaigns</div></div></div>
+    <div class="mcard"><div class="micon a" aria-hidden="true">&#x26A1;</div><div><div class="mval a" id="m2"><span class="skel">000</span></div><div class="mlbl">Timeline Events</div></div></div>
+    <div class="mcard"><div class="micon p" aria-hidden="true">&#x2699;</div><div><div class="mval p" id="m3"><span class="skel">0/0</span></div><div class="mlbl">Services Online</div></div></div>
+  </section>
+  <section class="cgrid" aria-label="Engagement overview">
     <div class="card">
       <div class="ch"><span class="ct">Campaign Funnel</span><span style="font-size:11px;color:var(--muted)">Across all campaigns</span></div>
-      <div class="cb"><div class="chart-wrap"><canvas id="fchart"></canvas></div></div>
+      <div class="cb"><div class="chart-wrap"><canvas id="fchart" aria-label="Funnel chart of campaign progression"></canvas></div></div>
     </div>
     <div class="rpanel">
       <div class="card">
@@ -200,60 +223,73 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <div class="cb"><div class="ptags" id="ptags"></div></div>
       </div>
     </div>
-  </div>
-  <div class="tabs-wrap">
-    <div class="tabs-hdr">
-      <div class="tbtn active" data-tab="timeline">&#x23F1; Timeline</div>
-      <div class="tbtn" data-tab="credentials">&#x1F511; Credentials</div>
-      <div class="tbtn" data-tab="campaigns">&#x1F4CB; Campaigns</div>
-      <div class="tbtn" data-tab="templates">&#x2709; Templates</div>
+  </section>
+  <section class="tabs-wrap" aria-label="Engagement detail tabs">
+    <div class="tabs-hdr" role="tablist" aria-label="Engagement views">
+      <button class="tbtn" type="button" role="tab" id="tab-btn-timeline"    aria-selected="true"  aria-controls="tab-timeline"    data-tab="timeline"    tabindex="0">&#x23F1; Timeline</button>
+      <button class="tbtn" type="button" role="tab" id="tab-btn-credentials" aria-selected="false" aria-controls="tab-credentials" data-tab="credentials" tabindex="-1">&#x1F511; Credentials</button>
+      <button class="tbtn" type="button" role="tab" id="tab-btn-campaigns"   aria-selected="false" aria-controls="tab-campaigns"   data-tab="campaigns"   tabindex="-1">&#x1F4CB; Campaigns</button>
+      <button class="tbtn" type="button" role="tab" id="tab-btn-templates"   aria-selected="false" aria-controls="tab-templates"   data-tab="templates"   tabindex="-1">&#x2709; Templates</button>
     </div>
-    <div class="tpane active" id="tab-timeline">
-      <div class="feed" id="feed"><div class="empty"><div class="empty-ico">&#x23F3;</div>No events yet</div></div>
+    <div class="tpane active" id="tab-timeline"    role="tabpanel" aria-labelledby="tab-btn-timeline">
+      <div class="feed" id="feed"><div class="empty"><div class="empty-ico" aria-hidden="true">&#x23F3;</div>No events yet</div></div>
     </div>
-    <div class="tpane" id="tab-credentials">
+    <div class="tpane" id="tab-credentials" role="tabpanel" aria-labelledby="tab-btn-credentials" hidden>
       <div style="overflow-x:auto">
         <table class="dtable">
-          <thead><tr><th>Captured</th><th>Phishlet</th><th>Username</th><th>Password</th><th>Source IP</th><th>User Agent</th></tr></thead>
+          <thead><tr><th scope="col">Captured</th><th scope="col">Phishlet</th><th scope="col">Username</th><th scope="col">Password</th><th scope="col">Source IP</th><th scope="col">User Agent</th></tr></thead>
           <tbody id="creds-body"></tbody>
         </table>
       </div>
     </div>
-    <div class="tpane" id="tab-campaigns">
+    <div class="tpane" id="tab-campaigns" role="tabpanel" aria-labelledby="tab-btn-campaigns" hidden>
       <div style="overflow-x:auto">
         <table class="dtable">
-          <thead><tr><th>Campaign</th><th>Status</th><th>Targets</th><th>Template</th><th>Phish URL</th><th>Launched</th></tr></thead>
+          <thead><tr><th scope="col">Campaign</th><th scope="col">Status</th><th scope="col">Targets</th><th scope="col">Template</th><th scope="col">Phish URL</th><th scope="col">Launched</th></tr></thead>
           <tbody id="camp-body"></tbody>
         </table>
       </div>
     </div>
-    <div class="tpane" id="tab-templates">
+    <div class="tpane" id="tab-templates" role="tabpanel" aria-labelledby="tab-btn-templates" hidden>
       <div style="overflow-x:auto">
         <table class="dtable">
-          <thead><tr><th>ID</th><th>Name</th><th>Subject</th><th></th></tr></thead>
+          <thead><tr><th scope="col">ID</th><th scope="col">Name</th><th scope="col">Subject</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
           <tbody id="tmpl-body"></tbody>
         </table>
       </div>
     </div>
-  </div>
-</div>
+  </section>
+</main>
 <script>
 var chart=null;
 function esc(s){if(!s)return'';var d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
-function fmt(ts){if(!ts||ts==='0001-01-01T00:00:00Z')return'&mdash;';var d=new Date(ts);return d.toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});}
-function fmtFull(ts){if(!ts||ts==='0001-01-01T00:00:00Z')return'&mdash;';return new Date(ts).toLocaleString();}
+function fmt(ts){if(!ts||ts==='0001-01-01T00:00:00Z')return'—';var d=new Date(ts);return d.toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});}
+function fmtFull(ts){if(!ts||ts==='0001-01-01T00:00:00Z')return'—';return new Date(ts).toLocaleString();}
 
-document.querySelectorAll('.tbtn').forEach(function(b){
-  b.addEventListener('click',function(){
-    document.querySelectorAll('.tbtn').forEach(function(x){x.classList.remove('active');});
-    document.querySelectorAll('.tpane').forEach(function(x){x.classList.remove('active');});
-    b.classList.add('active');
-    document.getElementById('tab-'+b.dataset.tab).classList.add('active');
-    if(b.dataset.tab==='templates')loadTemplates();
+var tabBtns=Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
+function activateTab(btn){
+  tabBtns.forEach(function(x){
+    var on=x===btn;
+    x.setAttribute('aria-selected',on?'true':'false');
+    x.setAttribute('tabindex',on?'0':'-1');
+    var pane=document.getElementById(x.getAttribute('aria-controls'));
+    if(pane){pane.classList.toggle('active',on);if(on){pane.removeAttribute('hidden');}else{pane.setAttribute('hidden','');}}
+  });
+  if(btn.dataset.tab==='templates')loadTemplates();
+}
+tabBtns.forEach(function(b){
+  b.addEventListener('click',function(){activateTab(b);});
+  b.addEventListener('keydown',function(e){
+    var i=tabBtns.indexOf(b);
+    if(e.key==='ArrowRight'){e.preventDefault();var n=tabBtns[(i+1)%tabBtns.length];n.focus();activateTab(n);}
+    else if(e.key==='ArrowLeft'){e.preventDefault();var p=tabBtns[(i-1+tabBtns.length)%tabBtns.length];p.focus();activateTab(p);}
+    else if(e.key==='Home'){e.preventDefault();tabBtns[0].focus();activateTab(tabBtns[0]);}
+    else if(e.key==='End'){e.preventDefault();var l=tabBtns[tabBtns.length-1];l.focus();activateTab(l);}
   });
 });
 
 function initChart(){
+  if(typeof Chart==='undefined'){return;}
   var ctx=document.getElementById('fchart').getContext('2d');
   chart=new Chart(ctx,{
     type:'bar',
@@ -301,7 +337,7 @@ function render(d){
   var sh='';
   (d.services||[]).forEach(function(s){
     var c=s.status==='active'?'active':(s.status==='inactive'?'inactive':'unknown');
-    sh+='<div class="srow"><span class="sname"><span class="dot '+c+'"></span>'+esc(s.name)+'</span><span class="sbadge '+c+'">'+esc(s.status)+'</span></div>';
+    sh+='<div class="srow"><span class="sname"><span class="dot '+c+'" aria-hidden="true"></span>'+esc(s.name)+'</span><span class="sbadge '+c+'">'+esc(s.status)+'</span></div>';
   });
   document.getElementById('svc-list').innerHTML=sh||'<div style="padding:10px 0;color:var(--muted);font-size:12px">No services</div>';
 
@@ -315,8 +351,8 @@ function render(d){
       '<div class="irow"><span class="ilbl">Client</span><span class="ival">'+esc(eng.client)+'</span></div>'+
       '<div class="irow"><span class="ilbl">Operator</span><span class="ival">'+esc(eng.operator)+'</span></div>'+
       '<div class="irow"><span class="ilbl">Domain</span><span class="ival">'+esc(eng.domain)+'</span></div>'+
-      '<div class="irow"><span class="ilbl">Window</span><span class="ival">'+esc(eng.start_date)+' &rarr; '+esc(eng.end_date)+'</span></div>'+
-      '<div class="pbar"><div class="pfill" style="width:'+progress+'%"></div></div>';
+      '<div class="irow"><span class="ilbl">Window</span><span class="ival">'+esc(eng.start_date)+' → '+esc(eng.end_date)+'</span></div>'+
+      '<div class="pbar" role="progressbar" aria-label="Engagement window progress" aria-valuenow="'+progress+'" aria-valuemin="0" aria-valuemax="100"><div class="pfill" style="width:'+progress+'%"></div></div>';
   }
 
   var pt='';
@@ -330,27 +366,27 @@ function render(d){
   document.getElementById('sync-lbl').textContent='Synced '+new Date().toLocaleTimeString();
 }
 
-var eIcons={email_sent:'&#x2709;',email_opened:'&#x1F441;',link_clicked:'&#x1F517;',submitted_data:'&#x1F4DD;',credential_captured:'&#x1F511;',campaign_launched:'&#x1F680;',target_status:'&#x1F3AF;',email_reported:'&#x26A0;'};
+var eIcons={email_sent:'✉',email_opened:'👁',link_clicked:'🔗',submitted_data:'📝',credential_captured:'🔑',campaign_launched:'🚀',target_status:'🎯',email_reported:'⚠'};
 var eLabels={email_sent:'Email Sent',email_opened:'Email Opened',link_clicked:'Link Clicked',submitted_data:'Data Submitted',credential_captured:'Credential Captured',campaign_launched:'Campaign Launched',target_status:'Target Update',email_reported:'Email Reported'};
 
 function renderTimeline(evts){
-  if(!evts.length){document.getElementById('feed').innerHTML='<div class="empty"><div class="empty-ico">&#x23F3;</div>No events yet &mdash; run a campaign to see the live feed.</div>';return;}
+  if(!evts.length){document.getElementById('feed').innerHTML='<div class="empty"><div class="empty-ico" aria-hidden="true">⏳</div>No events yet — run a campaign to see the live feed.</div>';return;}
   var html='';
   evts.forEach(function(e){
     var cls=e.event_type||'def';
-    var icon=eIcons[e.event_type]||'&#x2022;';
+    var icon=eIcons[e.event_type]||'•';
     var lbl=eLabels[e.event_type]||e.event_type;
     var meta='';
     if(e.email)meta+='<span>'+esc(e.email)+'</span>';
     if(e.remote_addr)meta+='<span>'+esc(e.remote_addr)+'</span>';
     if(e.detail)meta+='<span>'+esc(e.detail)+'</span>';
-    html+='<div class="tev"><div class="tico '+cls+'">'+icon+'</div><div class="tbody2"><div class="ttype '+cls+'">'+lbl+'</div><div class="tmeta"><span class="tsrc">'+esc(e.source)+'</span>'+meta+'</div></div><div class="ttime">'+fmt(e.timestamp)+'</div></div>';
+    html+='<div class="tev"><div class="tico '+cls+'" aria-hidden="true">'+icon+'</div><div class="tbody2"><div class="ttype '+cls+'">'+lbl+'</div><div class="tmeta"><span class="tsrc">'+esc(e.source)+'</span>'+meta+'</div></div><time class="ttime" datetime="'+esc(e.timestamp)+'">'+fmt(e.timestamp)+'</time></div>';
   });
   document.getElementById('feed').innerHTML=html;
 }
 
 function renderCreds(creds){
-  if(!creds.length){document.getElementById('creds-body').innerHTML='<tr><td colspan="6"><div class="empty"><div class="empty-ico">&#x1F511;</div>No credentials captured yet</div></td></tr>';return;}
+  if(!creds.length){document.getElementById('creds-body').innerHTML='<tr><td colspan="6"><div class="empty"><div class="empty-ico" aria-hidden="true">🔑</div>No credentials captured yet</div></td></tr>';return;}
   var rows='';
   creds.forEach(function(c){
     rows+='<tr><td style="white-space:nowrap;color:var(--muted)">'+fmtFull(c.captured_at)+'</td><td><span class="ptag on">'+esc(c.phishlet)+'</span></td><td><span class="mono code-c">'+esc(c.username)+'</span></td><td><span class="mono code-a">'+esc(c.password)+'</span></td><td><span class="mip">'+esc(c.remote_addr)+'</span></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px">'+esc(c.user_agent)+'</td></tr>';
@@ -359,7 +395,7 @@ function renderCreds(creds){
 }
 
 function renderCamps(camps){
-  if(!camps.length){document.getElementById('camp-body').innerHTML='<tr><td colspan="6"><div class="empty"><div class="empty-ico">&#x1F4CB;</div>No campaigns yet</div></td></tr>';return;}
+  if(!camps.length){document.getElementById('camp-body').innerHTML='<tr><td colspan="6"><div class="empty"><div class="empty-ico" aria-hidden="true">📋</div>No campaigns yet</div></td></tr>';return;}
   var rows='';
   camps.forEach(function(c){
     rows+='<tr><td><strong>'+esc(c.name)+'</strong></td><td><span class="cbadge '+esc(c.status)+'">'+esc(c.status)+'</span></td><td>'+c.target_count+'</td><td>'+esc(c.template_name)+'</td><td style="font-family:monospace;font-size:11px;color:var(--muted)">'+esc(c.phish_url)+'</td><td style="white-space:nowrap;color:var(--muted)">'+fmt(c.launched_at)+'</td></tr>';
@@ -369,15 +405,15 @@ function renderCamps(camps){
 
 function loadTemplates(){
   fetch('/api/templates').then(function(r){return r.json();}).then(function(tmps){
-    if(!tmps||!tmps.length){document.getElementById('tmpl-body').innerHTML='<tr><td colspan="4"><div class="empty"><div class="empty-ico">&#x2709;</div>No templates</div></td></tr>';return;}
+    if(!tmps||!tmps.length){document.getElementById('tmpl-body').innerHTML='<tr><td colspan="4"><div class="empty"><div class="empty-ico" aria-hidden="true">✉</div>No templates</div></td></tr>';return;}
     var rows='';
-    tmps.forEach(function(t){rows+='<tr><td style="color:var(--muted);font-family:monospace">'+t.id+'</td><td><strong>'+esc(t.name)+'</strong></td><td style="color:var(--muted)">'+esc(t.subject||'')+'</td><td><button class="btn-del" onclick="delTmpl('+t.id+')">Delete</button></td></tr>';});
+    tmps.forEach(function(t){rows+='<tr><td style="color:var(--muted);font-family:monospace">'+t.id+'</td><td><strong>'+esc(t.name)+'</strong></td><td style="color:var(--muted)">'+esc(t.subject||'')+'</td><td><button class="btn-del" type="button" aria-label="Delete template '+esc(t.name)+'" onclick="delTmpl('+t.id+')">Delete</button></td></tr>';});
     document.getElementById('tmpl-body').innerHTML=rows;
   }).catch(function(){});
 }
 
 function delTmpl(id){if(!confirm('Delete template #'+id+'?'))return;fetch('/api/templates/'+id,{method:'DELETE'}).then(loadTemplates);}
-function sync(){fetch('/api/campaigns/sync',{method:'POST'}).then(load).catch(function(){});}
+function sync(){var b=document.getElementById('btn-sync');b.setAttribute('aria-busy','true');fetch('/api/campaigns/sync',{method:'POST'}).then(load).catch(function(){}).finally(function(){b.removeAttribute('aria-busy');});}
 
 function load(){
   fetch('/api/dashboard')

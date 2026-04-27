@@ -55,8 +55,9 @@ targets:
     position: "CTO"
 
 dashboard:
-  listen: "127.0.0.1:8443"
-  # TLS is handled by SSH tunnel; dashboard binds to localhost only
+  # Bind localhost only; analyst access goes through the nginx ops panel on :8443
+  # (install.sh --with-ops-panel) or via SSH tunnel.
+  listen: "127.0.0.1:9000"
 
 store:
   # SQLite database path for credential store and engagement data

@@ -248,7 +248,8 @@ func deployCmd() *cobra.Command {
 			}()
 
 			fmt.Printf("\nDashboard running at http://%s\n", cfg.Dashboard.Listen)
-			fmt.Printf("Access via SSH tunnel: ssh -L 8443:%s user@server\n", cfg.Dashboard.Listen)
+			fmt.Printf("Behind ops panel: https://dashboard.<your-domain>:8443  (nginx vhost; install.sh --with-ops-panel)\n")
+			fmt.Printf("SSH tunnel fallback: ssh -L 9000:%s user@server\n", cfg.Dashboard.Listen)
 			fmt.Println("Press Ctrl+C to stop")
 
 			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

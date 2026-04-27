@@ -197,6 +197,65 @@ On the host:
 **Done when:** target tenant has rotated affected credentials,
 report delivered, captures wiped, lure disabled.
 
+## Anti-scanner hardening
+
+Evilginx 3 has two built-in defenses worth turning on for any
+production engagement. Both are disabled by default.
+
+### 1. User-Agent filter on the lure
+
+Set a UA filter on each lure so non-browser clients (`curl/`, `wget/`,
+`python-requests/`, `Go-http-client/`, masscan, nuclei, etc.) get
+rejected and **auto-blacklisted** by evilginx — they never see the
+phishlet.
+
+In the evilginx interactive shell (or via the dashboard's Phishlets
+tab → Edit Lure):
+
+```
+lures edit 0 ua_filter "Mozilla/.*"
+```
+
+This matches every real browser (Chrome, Edge, Safari, Firefox, mobile
+WebViews) and blocks effectively every scanner.
+
+### 2. Blacklist + operator IP allowlist
+
+Evilginx auto-populates `/opt/evilginx2/state/blacklist.txt` whenever
+an IP hits a non-lure path or is rejected by the UA filter. This is
+the desired behavior — but it will also blacklist your own scanning
+IPs if you're not careful.
+
+To prevent your own infrastructure (jump host, OOB / interactsh
+server, NAT egress, on-call laptops) from being silently blocked:
+
+1. Persist the friendly IPs/hostnames in
+   `/etc/evilginx-lab/blacklist-allowlist.txt` (one per line; comments
+   with `#` allowed; hostnames resolved via `dig`):
+
+   ```
+   # Operator infrastructure — never auto-blacklist
+   208.87.134.155        # OOB / interactsh
+   91.98.47.193          # PhishLab itself
+   178.104.216.136       # operator NAT egress
+   operator.ddns.net     # roaming laptop
+   ```
+
+2. Install the prune script + cron from the repo:
+
+   ```bash
+   sudo install -m 0755 scripts/blacklist-prune.sh /usr/local/bin/phishlab-blacklist-prune.sh
+   sudo install -m 0644 configs/blacklist-allowlist.example.txt /etc/evilginx-lab/blacklist-allowlist.txt
+   echo '*/5 * * * * root /usr/local/bin/phishlab-blacklist-prune.sh' | sudo tee /etc/cron.d/phishlab-blacklist-prune
+   ```
+
+The prune job runs every 5 minutes — even if you accidentally hit a
+non-lure path with a friendly IP, you'll be auto-rescued before the
+next campaign hour.
+
+**Done when:** UA filter is `Mozilla/.*` on every lure, allowlist
+contains every IP/hostname your team uses, cron runs cleanly.
+
 ## Troubleshooting
 
 | Symptom | Fix |

@@ -1,0 +1,18 @@
+# PhishLab blacklist allowlist
+#
+# IPs and hostnames listed here will be removed from
+# /opt/evilginx2/state/blacklist.txt every 5 minutes by the
+# phishlab-blacklist-prune cron. Use this for operator infrastructure
+# that should NEVER be silently blocked from the lure or dashboard.
+#
+# Syntax: one entry per line. Either IPv4/IPv6 literal or a hostname
+# (resolved on every cron tick via dig). Inline `#` comments allowed.
+#
+# Copy this file to /etc/evilginx-lab/blacklist-allowlist.txt and edit
+# in place; the install command in docs/RUNBOOK.md does this for you.
+
+# Examples — replace with your own infrastructure:
+# 203.0.113.10        # OOB / interactsh server
+# 198.51.100.4        # PhishLab host itself
+# 192.0.2.55          # operator NAT egress
+# operator.ddns.net   # roaming laptop on dynamic DNS

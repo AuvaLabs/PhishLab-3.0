@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AuvaLabs/PhishLab-3.0/internal/auth"
 	"github.com/AuvaLabs/PhishLab-3.0/internal/campaign"
 	"github.com/AuvaLabs/PhishLab-3.0/internal/config"
 	"github.com/AuvaLabs/PhishLab-3.0/internal/evilginx"
@@ -254,7 +255,15 @@ func deployCmd() *cobra.Command {
 			poller.Start(ctx)
 
 			// Start dashboard server
-			router := server.NewRouter(apiHandler)
+			authCfg := auth.LoadConfigFromEnv()
+			authH := auth.NewHandler(authCfg)
+			if authH.Enabled() {
+				log.Printf("[auth] Google OAuth enabled (allowlist: emails=%d domains=%d)",
+					len(authCfg.AllowedEmails), len(authCfg.AllowedDomains))
+			} else {
+				log.Printf("[auth] Google OAuth disabled (GOOGLE_OAUTH_CLIENT_ID/SECRET not set); legacy nginx basic-auth gate still applies")
+			}
+			router := server.NewRouter(apiHandler, authH)
 			srv := &http.Server{
 				Addr:    cfg.Dashboard.Listen,
 				Handler: router,
@@ -381,7 +390,15 @@ func serveCmd() *cobra.Command {
 			gpClient := gophish.NewClient(cfg.Gophish.AdminURL, cfg.Gophish.APIKey)
 			apiHandler := handlers.NewAPIHandler(db, egClient, gpClient)
 
-			router := server.NewRouter(apiHandler)
+			authCfg := auth.LoadConfigFromEnv()
+			authH := auth.NewHandler(authCfg)
+			if authH.Enabled() {
+				log.Printf("[auth] Google OAuth enabled (allowlist: emails=%d domains=%d)",
+					len(authCfg.AllowedEmails), len(authCfg.AllowedDomains))
+			} else {
+				log.Printf("[auth] Google OAuth disabled (GOOGLE_OAUTH_CLIENT_ID/SECRET not set); legacy nginx basic-auth gate still applies")
+			}
+			router := server.NewRouter(apiHandler, authH)
 			srv := &http.Server{
 				Addr:    cfg.Dashboard.Listen,
 				Handler: router,

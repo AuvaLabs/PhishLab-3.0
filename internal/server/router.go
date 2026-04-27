@@ -3,12 +3,17 @@ package server
 import (
 	"net/http"
 
+	"github.com/AuvaLabs/PhishLab-3.0/internal/auth"
 	"github.com/AuvaLabs/PhishLab-3.0/internal/server/handlers"
 	"github.com/AuvaLabs/PhishLab-3.0/internal/server/middleware"
 	"github.com/gorilla/mux"
 )
 
-func NewRouter(api *handlers.APIHandler) http.Handler {
+// NewRouter wires the dashboard router. The auth.Handler is optional;
+// pass nil to disable Google OAuth and rely on legacy nginx basic-auth
+// gating. When non-nil, OAuth gates everything except /healthz and
+// /auth/* and a session cookie is required for /api, /ws, and /.
+func NewRouter(api *handlers.APIHandler, authH *auth.Handler) http.Handler {
 	r := mux.NewRouter()
 
 	apiRouter := r.PathPrefix("/api").Subrouter()
@@ -27,6 +32,13 @@ func NewRouter(api *handlers.APIHandler) http.Handler {
 	apiRouter.HandleFunc("/templates", api.HandleCreateTemplate).Methods("POST")
 	apiRouter.HandleFunc("/templates/{id:[0-9]+}", api.HandleDeleteTemplate).Methods("DELETE")
 
+	if authH != nil {
+		apiRouter.HandleFunc("/auth/whoami", authH.WhoAmI).Methods("GET")
+		r.HandleFunc("/auth/google/login", authH.Login).Methods("GET")
+		r.HandleFunc("/auth/google/callback", authH.Callback).Methods("GET")
+		r.HandleFunc("/auth/logout", authH.Logout).Methods("GET", "POST")
+	}
+
 	r.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
@@ -39,7 +51,11 @@ func NewRouter(api *handlers.APIHandler) http.Handler {
 		w.Write([]byte(dashboardHTML))
 	})
 
-	handler := middleware.RequestLogger(middleware.LocalhostOnly(r))
+	var handler http.Handler = r
+	if authH != nil && authH.Enabled() {
+		handler = authH.Middleware(handler)
+	}
+	handler = middleware.RequestLogger(middleware.LocalhostOnly(handler))
 	return handler
 }
 

@@ -634,6 +634,65 @@ func (h *APIHandler) HandleDNSHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// PhishletState is the dashboard-facing summary of a phishlet's
+// current configuration in evilginx.
+type PhishletState struct {
+	Name     string `json:"name"`
+	Hostname string `json:"hostname"`
+	Enabled  bool   `json:"enabled"`
+	Visible  bool   `json:"visible"`
+	Lures    int    `json:"lures"`
+}
+
+// HandleGetPhishletsState reads /opt/evilginx2/state/config.json and
+// returns each phishlet's current enabled/hostname state plus the
+// number of lures pointing at it. Used by the Phishlets tab on the
+// dashboard so operators can enable/disable phishlets and create
+// lures without dropping to the evilginx CLI.
+func (h *APIHandler) HandleGetPhishletsState(w http.ResponseWriter, r *http.Request) {
+	const cfgPath = "/opt/evilginx2/state/config.json"
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		writeJSON(w, http.StatusOK, []PhishletState{})
+		return
+	}
+	var cfg struct {
+		Phishlets map[string]struct {
+			Hostname string `json:"hostname"`
+			Enabled  bool   `json:"enabled"`
+			Visible  bool   `json:"visible"`
+		} `json:"phishlets"`
+		Lures []struct {
+			Phishlet string `json:"phishlet"`
+		} `json:"lures"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, "parse evilginx config: "+err.Error())
+		return
+	}
+	lureCount := map[string]int{}
+	for _, l := range cfg.Lures {
+		lureCount[l.Phishlet]++
+	}
+	out := make([]PhishletState, 0, len(cfg.Phishlets))
+	for name, ph := range cfg.Phishlets {
+		out = append(out, PhishletState{
+			Name:     name,
+			Hostname: ph.Hostname,
+			Enabled:  ph.Enabled,
+			Visible:  ph.Visible,
+			Lures:    lureCount[name],
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Enabled != out[j].Enabled {
+			return out[i].Enabled
+		}
+		return out[i].Name < out[j].Name
+	})
+	writeJSON(w, http.StatusOK, out)
+}
+
 // editEvilginxConfig acquires a transactional read+write of the
 // evilginx config.json. Caller mutates the loaded map and returns
 // it; the function persists atomically via tmp+rename and triggers

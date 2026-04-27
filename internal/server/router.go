@@ -51,6 +51,7 @@ func NewRouter(api *handlers.APIHandler, authH *auth.Handler) http.Handler {
 	apiRouter.HandleFunc("/dns/health", api.HandleDNSHealth).Methods("GET")
 	apiRouter.HandleFunc("/phishlets/enable", api.HandleEnablePhishlet).Methods("POST")
 	apiRouter.HandleFunc("/phishlets/{phishlet}/disable", api.HandleDisablePhishlet).Methods("POST")
+	apiRouter.HandleFunc("/phishlets/state", api.HandleGetPhishletsState).Methods("GET")
 
 	// Stage 5 — engagement metadata editable in dashboard
 	apiRouter.HandleFunc("/engagement", api.HandleUpdateEngagement).Methods("PUT", "POST")
@@ -379,6 +380,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <button class="tbtn" type="button" role="tab" id="tab-btn-credentials" aria-selected="false" aria-controls="tab-credentials" data-tab="credentials" tabindex="-1">&#x1F511; Credentials</button>
       <button class="tbtn" type="button" role="tab" id="tab-btn-campaigns"   aria-selected="false" aria-controls="tab-campaigns"   data-tab="campaigns"   tabindex="-1">&#x1F4CB; Campaigns</button>
       <button class="tbtn" type="button" role="tab" id="tab-btn-templates"   aria-selected="false" aria-controls="tab-templates"   data-tab="templates"   tabindex="-1">&#x2709; Templates</button>
+      <button class="tbtn" type="button" role="tab" id="tab-btn-phishlets"   aria-selected="false" aria-controls="tab-phishlets"   data-tab="phishlets"   tabindex="-1">&#x1F3A3; Phishlets</button>
     </div>
     <div class="tpane active" id="tab-timeline"    role="tabpanel" aria-labelledby="tab-btn-timeline">
       <div class="feed" id="feed"><div class="empty"><div class="empty-ico" aria-hidden="true">&#x23F3;</div>No events yet</div></div>
@@ -411,6 +413,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         </table>
       </div>
     </div>
+    <div class="tpane" id="tab-phishlets" role="tabpanel" aria-labelledby="tab-btn-phishlets" hidden>
+      <div class="tbar">
+        <button class="tbar-btn" type="button" onclick="loadPhishlets()">&#x21BB; Refresh</button>
+        <span style="font-size:11px;color:var(--muted2);align-self:center">Toggle phishlets and create lures without dropping to the evilginx CLI.</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="dtable">
+          <thead><tr><th scope="col">Phishlet</th><th scope="col">Status</th><th scope="col">Hostname</th><th scope="col">Lures</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+          <tbody id="phishlets-body"></tbody>
+        </table>
+      </div>
+    </div>
   </section>
 </main>
 <script>
@@ -429,6 +443,7 @@ function activateTab(btn){
     if(pane){pane.classList.toggle('active',on);if(on){pane.removeAttribute('hidden');}else{pane.setAttribute('hidden','');}}
   });
   if(btn.dataset.tab==='templates')loadTemplates();
+  if(btn.dataset.tab==='phishlets')loadPhishlets();
 }
 tabBtns.forEach(function(b){
   b.addEventListener('click',function(){activateTab(b);});
@@ -829,6 +844,53 @@ function removeUser(entry){
   fetch('/api/users/'+encodeURIComponent(entry),{method:'DELETE'})
     .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
     .then(loadUsers).catch(function(e){alert('Remove failed: '+e.message);});
+}
+function loadPhishlets(){
+  fetch('/api/phishlets/state').then(function(r){return r.json();}).then(function(arr){
+    var box=document.getElementById('phishlets-body');if(!box)return;
+    if(!arr||!arr.length){box.innerHTML='<tr><td colspan="5"><div class="empty"><div class="empty-ico" aria-hidden="true">&#x1F3A3;</div>No phishlets discovered (check evilginx state dir)</div></td></tr>';return;}
+    box.innerHTML=arr.map(function(p){
+      var statusBadge=p.enabled
+        ? '<span class="cstat exploitable" style="animation:none">Enabled</span>'
+        : '<span class="cstat visited">Disabled</span>';
+      var actions=p.enabled
+        ? '<button class="copybtn" type="button" onclick="createLure(\''+esc(p.name).replace(/\x27/g,"\\x27")+'\')">+ Lure</button> '
+          +'<button class="copybtn" type="button" onclick="disablePhishlet(\''+esc(p.name).replace(/\x27/g,"\\x27")+'\')">Disable</button>'
+        : '<button class="copybtn" type="button" onclick="enablePhishlet(\''+esc(p.name).replace(/\x27/g,"\\x27")+'\')">Enable</button>';
+      return '<tr>'
+         +'<td><span class="lure-ph">'+esc(p.name)+'</span></td>'
+         +'<td>'+statusBadge+'</td>'
+         +'<td><span class="mono code-c">'+(p.hostname?esc(p.hostname):'<span style="color:var(--muted2)">(unset)</span>')+'</span></td>'
+         +'<td style="text-align:center"><span class="mono">'+p.lures+'</span></td>'
+         +'<td style="white-space:nowrap">'+actions+'</td>'
+         +'</tr>';
+    }).join('');
+  }).catch(function(e){
+    var box=document.getElementById('phishlets-body');
+    if(box)box.innerHTML='<tr><td colspan="5"><div class="empty" style="color:var(--amber)">Failed to load phishlets: '+esc(e.message)+'</div></td></tr>';
+  });
+}
+function enablePhishlet(name){
+  var hostname=prompt('Hostname for "'+name+'" phishlet (e.g. cyb3rdefence.com — used as the apex; phishlet uses login.<host>):');
+  if(!hostname)return;
+  fetch('/api/phishlets/enable',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phishlet:name,hostname:hostname})})
+    .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
+    .then(function(){alert('Phishlet '+name+' enabled. Evilginx is restarting.');setTimeout(loadPhishlets,3000);loadLures();})
+    .catch(function(e){alert('Enable failed: '+e.message);});
+}
+function disablePhishlet(name){
+  if(!confirm('Disable "'+name+'" phishlet? Active lures will stop responding.'))return;
+  fetch('/api/phishlets/'+encodeURIComponent(name)+'/disable',{method:'POST'})
+    .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
+    .then(function(){alert('Phishlet '+name+' disabled. Evilginx is restarting.');setTimeout(loadPhishlets,3000);loadLures();})
+    .catch(function(e){alert('Disable failed: '+e.message);});
+}
+function createLure(phishlet){
+  var path=prompt('Custom lure path? (Leave blank to auto-generate)','');
+  fetch('/api/lures',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phishlet:phishlet,path:path||''})})
+    .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
+    .then(function(d){alert('Lure created: '+d.path+'\nVisible in the Active Lures card. Use it in a campaign via "Use in Campaign".');setTimeout(loadPhishlets,3000);loadLures();})
+    .catch(function(e){alert('Create lure failed: '+e.message);});
 }
 function loadLures(){
   fetch('/api/lures').then(function(r){return r.json();}).then(function(arr){

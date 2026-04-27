@@ -27,6 +27,10 @@ type Repository interface {
 	GetTimeline(engagementID string, limit int) ([]TimelineEvent, error)
 	GetTimelineByCampaign(campaignID int64, limit int) ([]TimelineEvent, error)
 
+	// Audit log
+	RecordAudit(e AuditEvent) error
+	GetAuditEvents(limit int) ([]AuditEvent, error)
+
 	Close() error
 }
 

@@ -385,6 +385,21 @@ func (h *Handler) readSession(token string) (string, error) {
 	return payload.E, nil
 }
 
+// SessionEmail decodes a session-cookie value and returns the
+// authenticated email if the signature + expiry are valid; empty
+// string otherwise. Public wrapper around readSession used by the
+// audit middleware to attribute API actions.
+func (h *Handler) SessionEmail(token string) string {
+	if h == nil || token == "" {
+		return ""
+	}
+	email, err := h.readSession(token)
+	if err != nil {
+		return ""
+	}
+	return email
+}
+
 // LoadConfigFromEnv reads OAuth configuration from environment.
 // Returns a zero-value Config when env vars are unset.
 func LoadConfigFromEnv() Config {

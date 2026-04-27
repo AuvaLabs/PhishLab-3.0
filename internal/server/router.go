@@ -1,15 +1,73 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/AuvaLabs/PhishLab-3.0/internal/auth"
 	"github.com/AuvaLabs/PhishLab-3.0/internal/server/handlers"
 	"github.com/AuvaLabs/PhishLab-3.0/internal/server/middleware"
+	"github.com/AuvaLabs/PhishLab-3.0/internal/store"
 	"github.com/gorilla/mux"
 )
+
+// auditMiddleware records every state-changing API request to the
+// audit_log table. GET/HEAD requests + the audit endpoint itself
+// are skipped so dashboard polling doesn't fill the table.
+func auditMiddleware(api *handlers.APIHandler, authH *auth.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+			p := r.URL.Path
+			if !strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/api/audit") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			actor := "anonymous"
+			if authH != nil {
+				if c, err := r.Cookie("ecc_sess"); err == nil {
+					if email := authH.SessionEmail(c.Value); email != "" {
+						actor = email
+					}
+				}
+			}
+			var bodyCopy []byte
+			if r.Body != nil {
+				bodyCopy, _ = io.ReadAll(io.LimitReader(r.Body, 4096))
+				r.Body = io.NopCloser(bytes.NewReader(bodyCopy))
+			}
+			next.ServeHTTP(w, r)
+			details := map[string]any{"method": r.Method, "path": p}
+			if len(bodyCopy) > 0 && len(bodyCopy) < 4096 {
+				var body any
+				if err := json.Unmarshal(bodyCopy, &body); err == nil {
+					if m, ok := body.(map[string]any); ok {
+						for _, k := range []string{"password", "secret", "token", "client_secret"} {
+							if _, has := m[k]; has {
+								m[k] = "***"
+							}
+						}
+						details["body"] = m
+					}
+				}
+			}
+			detailsJSON, _ := json.Marshal(details)
+			_ = api.DB.RecordAudit(store.AuditEvent{
+				Actor:       actor,
+				Action:      r.Method + " " + p,
+				DetailsJSON: string(detailsJSON),
+				RemoteAddr:  r.RemoteAddr,
+				UserAgent:   r.UserAgent(),
+			})
+		})
+	}
+}
 
 // NewRouter wires the dashboard router. The auth.Handler is optional;
 // pass nil to disable Google OAuth and rely on legacy nginx basic-auth
@@ -52,6 +110,20 @@ func NewRouter(api *handlers.APIHandler, authH *auth.Handler) http.Handler {
 	apiRouter.HandleFunc("/phishlets/enable", api.HandleEnablePhishlet).Methods("POST")
 	apiRouter.HandleFunc("/phishlets/{phishlet}/disable", api.HandleDisablePhishlet).Methods("POST")
 	apiRouter.HandleFunc("/phishlets/state", api.HandleGetPhishletsState).Methods("GET")
+
+	// Audit log read endpoint
+	apiRouter.HandleFunc("/audit", func(w http.ResponseWriter, req *http.Request) {
+		events, err := api.DB.GetAuditEvents(500)
+		if err != nil {
+			http.Error(w, `{"error":"audit query failed"}`, http.StatusInternalServerError)
+			return
+		}
+		if events == nil {
+			events = []store.AuditEvent{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(events)
+	}).Methods("GET")
 
 	// Stage 5 — engagement metadata editable in dashboard
 	apiRouter.HandleFunc("/engagement", api.HandleUpdateEngagement).Methods("PUT", "POST")
@@ -104,6 +176,10 @@ func NewRouter(api *handlers.APIHandler, authH *auth.Handler) http.Handler {
 	})
 
 	var handler http.Handler = r
+	// Audit must run AFTER auth (so actor email is known) but
+	// BEFORE the actual handler executes so we can copy the
+	// request body before it's consumed.
+	handler = auditMiddleware(api, authH)(handler)
 	if authH != nil && authH.Enabled() {
 		handler = authH.Middleware(handler)
 	}
@@ -381,6 +457,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <button class="tbtn" type="button" role="tab" id="tab-btn-campaigns"   aria-selected="false" aria-controls="tab-campaigns"   data-tab="campaigns"   tabindex="-1">&#x1F4CB; Campaigns</button>
       <button class="tbtn" type="button" role="tab" id="tab-btn-templates"   aria-selected="false" aria-controls="tab-templates"   data-tab="templates"   tabindex="-1">&#x2709; Templates</button>
       <button class="tbtn" type="button" role="tab" id="tab-btn-phishlets"   aria-selected="false" aria-controls="tab-phishlets"   data-tab="phishlets"   tabindex="-1">&#x1F3A3; Phishlets</button>
+      <button class="tbtn" type="button" role="tab" id="tab-btn-audit"       aria-selected="false" aria-controls="tab-audit"       data-tab="audit"       tabindex="-1">&#x1F4DC; Audit</button>
     </div>
     <div class="tpane active" id="tab-timeline"    role="tabpanel" aria-labelledby="tab-btn-timeline">
       <div class="feed" id="feed"><div class="empty"><div class="empty-ico" aria-hidden="true">&#x23F3;</div>No events yet</div></div>
@@ -425,6 +502,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         </table>
       </div>
     </div>
+    <div class="tpane" id="tab-audit" role="tabpanel" aria-labelledby="tab-btn-audit" hidden>
+      <div class="tbar">
+        <button class="tbar-btn" type="button" onclick="loadAudit()">&#x21BB; Refresh</button>
+        <span style="font-size:11px;color:var(--muted2);align-self:center">Forensic trail: every state-changing API call. GETs are not logged.</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="dtable">
+          <thead><tr><th scope="col">When</th><th scope="col">Actor</th><th scope="col">Action</th><th scope="col">Source IP</th><th scope="col">Details</th></tr></thead>
+          <tbody id="audit-body"></tbody>
+        </table>
+      </div>
+    </div>
   </section>
 </main>
 <script>
@@ -444,6 +533,7 @@ function activateTab(btn){
   });
   if(btn.dataset.tab==='templates')loadTemplates();
   if(btn.dataset.tab==='phishlets')loadPhishlets();
+  if(btn.dataset.tab==='audit')loadAudit();
 }
 tabBtns.forEach(function(b){
   b.addEventListener('click',function(){activateTab(b);});
@@ -845,6 +935,27 @@ function removeUser(entry){
     .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
     .then(loadUsers).catch(function(e){alert('Remove failed: '+e.message);});
 }
+function loadAudit(){
+  fetch('/api/audit').then(function(r){return r.json();}).then(function(arr){
+    var box=document.getElementById('audit-body');if(!box)return;
+    if(!arr||!arr.length){box.innerHTML='<tr><td colspan="5"><div class="empty"><div class="empty-ico" aria-hidden="true">&#x1F4DC;</div>No audit events recorded yet</div></td></tr>';return;}
+    box.innerHTML=arr.map(function(e){
+      var details=e.details_json||'{}';
+      try{var p=JSON.parse(details);details=JSON.stringify(p,null,0);}catch(_){}
+      if(details.length>120)details=details.substring(0,120)+'…';
+      return '<tr>'
+         +'<td style="white-space:nowrap;color:var(--muted)">'+fmtFull(e.created_at)+'</td>'
+         +'<td><span class="mono code-c">'+esc(e.actor)+'</span></td>'
+         +'<td><span class="ptag on">'+esc(e.action)+'</span></td>'
+         +'<td><span class="mip">'+esc((e.remote_addr||'').split(":")[0])+'</span></td>'
+         +'<td style="font-family:monospace;font-size:11px;color:var(--muted);max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(e.details_json||'')+'">'+esc(details)+'</td>'
+         +'</tr>';
+    }).join('');
+  }).catch(function(e){
+    var box=document.getElementById('audit-body');
+    if(box)box.innerHTML='<tr><td colspan="5"><div class="empty" style="color:var(--amber)">Failed to load audit log: '+esc(e.message)+'</div></td></tr>';
+  });
+}
 function loadPhishlets(){
   fetch('/api/phishlets/state').then(function(r){return r.json();}).then(function(arr){
     var box=document.getElementById('phishlets-body');if(!box)return;
@@ -871,12 +982,21 @@ function loadPhishlets(){
   });
 }
 function enablePhishlet(name){
-  var hostname=prompt('Hostname for "'+name+'" phishlet (e.g. cyb3rdefence.com — used as the apex; phishlet uses login.<host>):');
-  if(!hostname)return;
-  fetch('/api/phishlets/enable',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phishlet:name,hostname:hostname})})
-    .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
-    .then(function(){alert('Phishlet '+name+' enabled. Evilginx is restarting.');setTimeout(loadPhishlets,3000);loadLures();})
-    .catch(function(e){alert('Enable failed: '+e.message);});
+  // Auto-suggest the hostname from the active engagement's domain
+  // (strip subdomain to get apex). Operator can override.
+  var suggested='';
+  fetch('/api/dashboard').then(function(r){return r.json();}).then(function(d){
+    if(d&&d.engagement&&d.engagement.domain){
+      var parts=d.engagement.domain.split('.');
+      suggested=parts.length>2?parts.slice(-2).join('.'):d.engagement.domain;
+    }
+    var hostname=prompt('Hostname (apex) for "'+name+'" phishlet — phishlet uses login.<host>:', suggested);
+    if(!hostname)return;
+    fetch('/api/phishlets/enable',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phishlet:name,hostname:hostname})})
+      .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
+      .then(function(){alert('Phishlet '+name+' enabled. Evilginx is restarting.');setTimeout(loadPhishlets,3000);loadLures();})
+      .catch(function(e){alert('Enable failed: '+e.message);});
+  });
 }
 function disablePhishlet(name){
   if(!confirm('Disable "'+name+'" phishlet? Active lures will stop responding.'))return;

@@ -188,6 +188,20 @@ type CampaignRecord struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+// AuditEvent records a state-changing operator action against the
+// dashboard so multi-operator engagements have a forensic trail.
+// Read-only paths (GETs / dashboard polls) are not recorded.
+type AuditEvent struct {
+	ID          int64     `json:"id"`
+	Actor       string    `json:"actor"`
+	Action      string    `json:"action"`
+	Target      string    `json:"target"`
+	DetailsJSON string    `json:"details_json"`
+	RemoteAddr  string    `json:"remote_addr"`
+	UserAgent   string    `json:"user_agent"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 // TimelineEvent is a unified event from Gophish or Evilginx
 type TimelineEvent struct {
 	ID           int64     `json:"id"`

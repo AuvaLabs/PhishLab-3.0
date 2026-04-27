@@ -105,6 +105,19 @@ func (db *DB) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_timeline_engagement ON timeline_events(engagement_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_timeline_campaign ON timeline_events(campaign_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_timeline_rid ON timeline_events(rid)`,
+		`CREATE TABLE IF NOT EXISTS audit_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			actor TEXT NOT NULL DEFAULT '',
+			action TEXT NOT NULL DEFAULT '',
+			target TEXT NOT NULL DEFAULT '',
+			details_json TEXT NOT NULL DEFAULT '{}',
+			remote_addr TEXT NOT NULL DEFAULT '',
+			user_agent TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC)`,
 	}
 
 	for _, m := range migrations {
@@ -376,6 +389,41 @@ func (db *DB) GetTimelineByCampaign(campaignID int64, limit int) ([]TimelineEven
 	for rows.Next() {
 		var e TimelineEvent
 		if err := rows.Scan(&e.ID, &e.EngagementID, &e.CampaignID, &e.Source, &e.EventType, &e.Email, &e.Detail, &e.RID, &e.RemoteAddr, &e.Timestamp, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
+// RecordAudit appends an audit event. Best-effort - failure to
+// record audit must NOT block the underlying operation.
+func (db *DB) RecordAudit(e AuditEvent) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO audit_log (actor, action, target, details_json, remote_addr, user_agent, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		e.Actor, e.Action, e.Target, e.DetailsJSON, e.RemoteAddr, e.UserAgent, time.Now(),
+	)
+	return err
+}
+
+// GetAuditEvents returns recent audit events, newest first.
+// limit caps rows; 0 means default 200.
+func (db *DB) GetAuditEvents(limit int) ([]AuditEvent, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := db.conn.Query(`
+		SELECT id, actor, action, target, details_json, remote_addr, user_agent, created_at
+		FROM audit_log ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []AuditEvent
+	for rows.Next() {
+		var e AuditEvent
+		if err := rows.Scan(&e.ID, &e.Actor, &e.Action, &e.Target, &e.DetailsJSON, &e.RemoteAddr, &e.UserAgent, &e.CreatedAt); err != nil {
 			return nil, err
 		}
 		events = append(events, e)

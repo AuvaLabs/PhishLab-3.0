@@ -41,6 +41,15 @@ func NewRouter(api *handlers.APIHandler, authH *auth.Handler) http.Handler {
 	apiRouter.HandleFunc("/pages", api.HandleGetPages).Methods("GET")
 	apiRouter.HandleFunc("/campaigns/{id:[0-9]+}", api.HandleGetCampaignDetail).Methods("GET")
 	apiRouter.HandleFunc("/lures", api.HandleGetLures).Methods("GET")
+	apiRouter.HandleFunc("/lures", api.HandleCreateLure).Methods("POST")
+
+	// Stage 6 - finishing touches
+	apiRouter.HandleFunc("/captures/{session_id}/cookies", api.HandleDownloadCookies).Methods("GET")
+	apiRouter.HandleFunc("/test-email", api.HandleSendTestEmail).Methods("POST")
+	apiRouter.HandleFunc("/engagement/report", api.HandleEngagementReport).Methods("GET")
+	apiRouter.HandleFunc("/dns/health", api.HandleDNSHealth).Methods("GET")
+	apiRouter.HandleFunc("/phishlets/enable", api.HandleEnablePhishlet).Methods("POST")
+	apiRouter.HandleFunc("/phishlets/{phishlet}/disable", api.HandleDisablePhishlet).Methods("POST")
 
 	// Stage 5 — engagement metadata editable in dashboard
 	apiRouter.HandleFunc("/engagement", api.HandleUpdateEngagement).Methods("PUT", "POST")
@@ -304,6 +313,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <span class="sync-label" id="sync-lbl"></span>
     <button class="btn-sync" id="btn-sync" type="button" onclick="sync()" aria-label="Sync campaign data from Gophish">&#x21BB;&nbsp;Sync</button>
     <button class="btn-sync" type="button" onclick="openUsersModal()" aria-label="Manage dashboard users">&#x1F465;&nbsp;Users</button>
+    <a class="btn-sync" href="/auth/logout" aria-label="Sign out" style="text-decoration:none;display:inline-flex;align-items:center">&#x1F6AA;&nbsp;Logout</a>
   </div>
 </header>
 <main class="main" id="main">
@@ -337,8 +347,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <section class="engcard" aria-label="Engagement metadata">
     <div class="engcard-h">
       <h3>Engagement</h3>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="tbar-btn" type="button" onclick="openEngForm()">&#x270F; Edit / New</button>
+        <button class="tbar-btn" type="button" onclick="downloadReport()" title="Download engagement report (Markdown)">&#x1F4C4; Report</button>
         <button class="tbar-btn" type="button" onclick="clearEngagement()" style="border-color:rgba(255,23,68,.4);color:var(--red)">&#x1F5D1; Clear Data</button>
       </div>
     </div>
@@ -353,6 +364,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <span style="font-size:11px;color:var(--muted2)">Phishing entry URLs &mdash; paste into Gophish "Phish URL" field</span>
     </div>
     <div id="lures-list"><div class="lbl">Loading&#x2026;</div></div>
+  </section>
+  <section class="engcard" aria-label="DNS deliverability health">
+    <div class="engcard-h">
+      <h3>DNS Health</h3>
+      <button class="tbar-btn" type="button" onclick="loadDNS()">&#x21BB; Recheck</button>
+    </div>
+    <div id="dns-grid" class="engcard-grid"><div><div class="lbl">Checking&#x2026;</div></div></div>
   </section>
   <section class="tabs-wrap" aria-label="Engagement detail tabs">
     <div class="tabs-hdr" role="tablist" aria-label="Engagement views">
@@ -542,7 +560,9 @@ function renderCreds(creds){
        +'<td><span class="mono code-a">'+pwd+'</span></td>'
        +'<td style="text-align:center"><span class="mono">'+cookieCount+'</span></td>'
        +'<td><span class="mip">'+esc(c.remote_addr)+'</span></td>'
-       +'<td><button class="expandbtn" type="button" aria-expanded="false" aria-controls="rec-'+c.id+'" onclick="toggleRec('+c.id+')">Why?</button></td>'
+       +'<td style="white-space:nowrap"><button class="expandbtn" type="button" aria-expanded="false" aria-controls="rec-'+c.id+'" onclick="toggleRec('+c.id+')">Why?</button>'
+       +(cookieCount?' <a class="expandbtn" href="/api/captures/'+esc(c.session_id)+'/cookies" download title="Cookie-Editor JSON">&#x2B07; Cookies</a>':'')
+       +'</td>'
        +'</tr>'
        +'<tr class="detailrow hide" id="rec-'+c.id+'"><td colspan="8">'+recsHtml+'</td></tr>';
   });
@@ -697,6 +717,30 @@ function submitGroup(){
     .then(function(){hideModal('modal-group');alert('Group "'+name+'" created with '+targets.length+' targets');})
     .catch(function(e){alert('Create failed: '+e.message);});
 }
+function downloadReport(){window.location='/api/engagement/report';}
+function sendTestFromForm(){
+  var smtp=document.getElementById('camp-smtp').value;
+  if(!smtp){alert('Pick a sending profile under Advanced first.');return;}
+  var to=prompt('Send test email to:','nicholai@auvalabs.com');
+  if(!to)return;
+  fetch('/api/test-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:to,profile_name:smtp})})
+    .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
+    .then(function(d){alert('Test email sent to '+d.sent_to+' via '+d.via);})
+    .catch(function(e){alert('Send failed: '+e.message);});
+}
+function loadDNS(){
+  var grid=document.getElementById('dns-grid');if(!grid)return;
+  grid.innerHTML='<div><div class="lbl">Checking&#x2026;</div></div>';
+  fetch('/api/dns/health').then(function(r){return r.json();}).then(function(d){
+    if(!d.results||!d.results.length){grid.innerHTML='<div><div class="lbl">No data</div></div>';return;}
+    grid.innerHTML='<div style="grid-column:1 / -1;font-size:11px;color:var(--muted2);margin-bottom:6px">Domain: <code>'+esc(d.domain)+'</code></div>'+
+      d.results.map(function(c){
+        var color=c.status==='pass'?'var(--green)':(c.status==='warn'?'var(--amber)':'var(--red)');
+        var icon=c.status==='pass'?'&#x2714;':(c.status==='warn'?'&#x26A0;':'&#x2716;');
+        return '<div><div class="lbl">'+esc(c.name)+'</div><div class="val" style="color:'+color+'">'+icon+' '+c.status.toUpperCase()+'</div><div style="font-size:10px;color:var(--muted2);font-family:monospace;margin-top:3px;word-break:break-all">'+esc(c.detail)+'</div></div>';
+      }).join('');
+  }).catch(function(){grid.innerHTML='<div><div class="lbl" style="color:var(--amber)">DNS check failed</div></div>';});
+}
 function clearEngagement(){
   if(!confirm('Wipe ALL captured credentials and timeline events for the active engagement?\n\nThe engagement record itself stays. This cannot be undone.'))return;
   fetch('/api/engagement/clear',{method:'POST'})
@@ -805,7 +849,7 @@ function renderEng(eng){
   }).join('');
 }
 
-initChart();load();loadLures();setInterval(load,15000);setInterval(loadLures,30000);connectWS();
+initChart();load();loadLures();loadDNS();setInterval(load,15000);setInterval(loadLures,30000);setInterval(loadDNS,300000);connectWS();
 </script>
 <div class="modal" id="modal-camp" role="dialog" aria-modal="true" aria-labelledby="modal-camp-h">
   <div class="modal-card">
@@ -836,6 +880,7 @@ initChart();load();loadLures();setInterval(load,15000);setInterval(loadLures,300
     </div>
     <div class="modal-f">
       <button class="tbar-btn" type="button" onclick="hideModal('modal-camp')">Cancel</button>
+      <button class="tbar-btn" type="button" onclick="sendTestFromForm()" title="Send a test email to one address using the selected sending profile">&#x2709; Test Send</button>
       <button class="tbar-btn primary" type="button" onclick="submitCamp()">Launch &amp; Send</button>
     </div>
   </div>

@@ -15,7 +15,7 @@
 #   docker compose up -d
 
 ARG GO_VERSION=1.25.9
-ARG ALPINE_VERSION=3.20
+ARG ALPINE_VERSION=3.22
 
 FROM golang:${GO_VERSION}-alpine${ALPINE_VERSION} AS builder
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -79,6 +80,18 @@ func (p *SessionPoller) poll() {
 }
 
 func (p *SessionPoller) readSessions() ([]CapturedSession, error) {
+	// Evilginx writes data.db only after the first session capture. Until then
+	// the file is missing or 0 bytes; bbolt.Open in ReadOnly mode would fail
+	// trying to initialize the file's magic header. Silently skip - this is
+	// the expected steady state of an engagement before any victim clicks.
+	fi, err := os.Stat(p.dbPath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err == nil && fi.Size() == 0 {
+		return nil, nil
+	}
+
 	db, err := bolt.Open(p.dbPath, 0600, &bolt.Options{
 		ReadOnly: true,
 		Timeout:  2 * time.Second,

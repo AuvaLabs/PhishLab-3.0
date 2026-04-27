@@ -188,6 +188,34 @@ func (db *DB) InsertCredential(c CapturedCredential) error {
 	return err
 }
 
+// ClearEngagementData deletes all captured credentials and timeline
+// events tied to the given engagement id. The engagement record
+// itself is preserved. Returns (credsDeleted, eventsDeleted, error).
+func (db *DB) ClearEngagementData(engagementID string) (int64, int64, error) {
+	if engagementID == "" {
+		return 0, 0, fmt.Errorf("engagement id required")
+	}
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback()
+	credsRes, err := tx.Exec(`DELETE FROM captured_credentials WHERE engagement_id = ?`, engagementID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("delete credentials: %w", err)
+	}
+	credsN, _ := credsRes.RowsAffected()
+	eventsRes, err := tx.Exec(`DELETE FROM timeline_events WHERE engagement_id = ?`, engagementID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("delete timeline: %w", err)
+	}
+	eventsN, _ := eventsRes.RowsAffected()
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	return credsN, eventsN, nil
+}
+
 // GetCredentials returns all credentials for an engagement
 func (db *DB) GetCredentials(engagementID string) ([]CapturedCredential, error) {
 	rows, err := db.conn.Query(`

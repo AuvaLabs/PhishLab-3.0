@@ -44,6 +44,7 @@ func NewRouter(api *handlers.APIHandler, authH *auth.Handler) http.Handler {
 
 	// Stage 5 — engagement metadata editable in dashboard
 	apiRouter.HandleFunc("/engagement", api.HandleUpdateEngagement).Methods("PUT", "POST")
+	apiRouter.HandleFunc("/engagement/clear", api.HandleClearEngagement).Methods("POST")
 
 	if authH != nil {
 		apiRouter.HandleFunc("/auth/whoami", authH.WhoAmI).Methods("GET")
@@ -338,6 +339,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <h3>Engagement</h3>
       <div style="display:flex;gap:8px">
         <button class="tbar-btn" type="button" onclick="openEngForm()">&#x270F; Edit / New</button>
+        <button class="tbar-btn" type="button" onclick="clearEngagement()" style="border-color:rgba(255,23,68,.4);color:var(--red)">&#x1F5D1; Clear Data</button>
       </div>
     </div>
     <div class="engcard-grid" id="eng-grid">
@@ -694,6 +696,13 @@ function submitGroup(){
     .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
     .then(function(){hideModal('modal-group');alert('Group "'+name+'" created with '+targets.length+' targets');})
     .catch(function(e){alert('Create failed: '+e.message);});
+}
+function clearEngagement(){
+  if(!confirm('Wipe ALL captured credentials and timeline events for the active engagement?\n\nThe engagement record itself stays. This cannot be undone.'))return;
+  fetch('/api/engagement/clear',{method:'POST'})
+    .then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'HTTP '+r.status);});return r.json();})
+    .then(function(d){alert('Cleared '+d.credentials_cleared+' credential(s) and '+d.timeline_cleared+' timeline event(s) from engagement '+d.engagement_id);load();})
+    .catch(function(e){alert('Clear failed: '+e.message);});
 }
 function openEngForm(){
   fetch('/api/dashboard').then(function(r){return r.json();}).then(function(d){

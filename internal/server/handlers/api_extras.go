@@ -210,6 +210,33 @@ type engagementUpdateRequest struct {
 	Notes        string `json:"notes"`
 }
 
+// HandleClearEngagement deletes all captured credentials and timeline
+// events tied to the active engagement (or one specified via ?id=).
+// The engagement metadata record is preserved so the operator can
+// keep using the same engagement id; only the operational data is
+// wiped. Destructive — invoked from a confirm dialog in the UI.
+func (h *APIHandler) HandleClearEngagement(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		eng, _ := h.DB.GetActiveEngagement()
+		if eng == nil {
+			writeError(w, http.StatusBadRequest, "no active engagement")
+			return
+		}
+		id = eng.ID
+	}
+	creds, events, err := h.DB.ClearEngagementData(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "clear failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"engagement_id":     id,
+		"credentials_cleared": creds,
+		"timeline_cleared":  events,
+	})
+}
+
 // HandleUpdateEngagement updates the active engagement record from a
 // JSON body. The runtime DB is the source of truth for the dashboard;
 // the operator can re-sync `evilginx-lab.yaml` separately if desired

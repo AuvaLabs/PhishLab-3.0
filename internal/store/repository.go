@@ -13,6 +13,9 @@ type Repository interface {
 	GetAllCredentials() ([]CapturedCredential, error)
 	CredentialCount(engagementID string) (int, error)
 
+	// Engagement data wipe (preserves the engagement record)
+	ClearEngagementData(engagementID string) (int64, int64, error)
+
 	// Campaigns
 	InsertCampaign(c CampaignRecord) (int64, error)
 	UpdateCampaignStatus(id int64, status string) error

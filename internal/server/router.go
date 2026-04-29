@@ -315,7 +315,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .cstat.exploitable{background:var(--red-dim);color:var(--red);border:1px solid rgba(255,23,68,.4);animation:pulse-red 2s ease-in-out infinite}
 @keyframes pulse-red{0%,100%{box-shadow:0 0 0 0 rgba(255,23,68,.5)}50%{box-shadow:0 0 0 6px rgba(255,23,68,0)}}
 @keyframes toastIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:translateX(0)}}
-@media(prefers-reduced-motion:reduce){.cstat.exploitable{animation:none}}
+@keyframes flashRow{0%{background:rgba(0,229,255,.18)}100%{background:transparent}}
+@media(prefers-reduced-motion:reduce){.cstat.exploitable{animation:none}.tev[data-clickable] .ttype::after{transform:none}.dtable tr.flash{animation:none}}
+.cred-filter-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;margin-bottom:12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px}
+.cred-filter-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
+.cred-filter-chip{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;font-size:12px}
+.cred-filter-chip input[type="checkbox"]{cursor:pointer;accent-color:var(--cyan);width:14px;height:14px}
+.cred-filter-chip:hover .cstat,.cred-filter-chip:focus-within .cstat{filter:brightness(1.15)}
+.cred-filter-count{margin-left:auto;font-size:11px;color:var(--muted)}
+.tev[data-clickable]{cursor:pointer;transition:background .12s,box-shadow .12s}
+.tev[data-clickable]:hover,.tev[data-clickable]:focus-visible{background:rgba(0,229,255,.05);outline:none;box-shadow:inset 3px 0 0 var(--cyan)}
+.tev[data-clickable] .ttype::after{content:" \2192";color:var(--cyan);opacity:.65;font-weight:600;display:inline-block;transition:transform .15s}
+.tev[data-clickable]:hover .ttype::after{transform:translateX(3px)}
+.dtable tr.flash{animation:flashRow 1.6s ease-out 1}
 .recpane{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin:10px 0}
 .recpane h4{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--cyan);margin-bottom:10px;font-weight:700}
 .recpane ul{margin:0;padding-left:20px}
@@ -475,6 +487,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div class="feed" id="feed"><div class="empty"><div class="empty-ico" aria-hidden="true">&#x23F3;</div>No events yet</div></div>
     </div>
     <div class="tpane" id="tab-credentials" role="tabpanel" aria-labelledby="tab-btn-credentials" hidden>
+      <div class="cred-filter-bar" role="group" aria-label="Filter captures by status">
+        <span class="cred-filter-label">Show:</span>
+        <label class="cred-filter-chip"><input type="checkbox" data-status-filter="visited" checked> <span class="cstat visited">Visited</span></label>
+        <label class="cred-filter-chip"><input type="checkbox" data-status-filter="vulnerable" checked> <span class="cstat vulnerable">Vulnerable</span></label>
+        <label class="cred-filter-chip"><input type="checkbox" data-status-filter="exploitable" checked> <span class="cstat exploitable" style="animation:none">Exploitable</span></label>
+        <span class="cred-filter-count" id="cred-filter-count" aria-live="polite"></span>
+      </div>
       <div style="overflow-x:auto">
         <table class="dtable">
           <thead><tr><th scope="col">Status</th><th scope="col">Captured</th><th scope="col">Phishlet</th><th scope="col">Username</th><th scope="col">Password</th><th scope="col">Cookies</th><th scope="col">Source IP</th><th scope="col"><span class="sr-only">Recommendations</span></th></tr></thead>
@@ -651,15 +670,82 @@ function renderTimeline(evts){
     if(e.email)meta+='<span>'+esc(e.email)+'</span>';
     if(e.remote_addr)meta+='<span>'+esc(e.remote_addr)+'</span>';
     if(e.detail)meta+='<span>'+esc(e.detail)+'</span>';
-    html+='<div class="tev"><div class="tico '+cls+'" aria-hidden="true">'+icon+'</div><div class="tbody2"><div class="ttype '+cls+'">'+lbl+'</div><div class="tmeta"><span class="tsrc">'+esc(e.source)+'</span>'+meta+'</div></div><time class="ttime" datetime="'+esc(e.timestamp)+'">'+fmt(e.timestamp)+'</time></div>';
+    var clickable=(e.event_type==='credential_captured');
+    var attrs=clickable
+      ? ' data-clickable="1" data-cred-email="'+esc(e.email||'')+'" data-cred-ip="'+esc(e.remote_addr||'')+'" tabindex="0" role="button" aria-label="View captured credential for '+esc(e.email||'unknown')+' in Credentials tab" title="Open in Credentials tab"'
+      : '';
+    html+='<div class="tev"'+attrs+'><div class="tico '+cls+'" aria-hidden="true">'+icon+'</div><div class="tbody2"><div class="ttype '+cls+'">'+lbl+'</div><div class="tmeta"><span class="tsrc">'+esc(e.source)+'</span>'+meta+'</div></div><time class="ttime" datetime="'+esc(e.timestamp)+'">'+fmt(e.timestamp)+'</time></div>';
   });
   document.getElementById('feed').innerHTML=html;
 }
 
+function gotoCredential(email,ip){
+  var btn=document.getElementById('tab-btn-credentials');
+  if(btn)activateTab(btn);
+  // Make sure all status filters are on so we don't hide the row we
+  // just navigated to. Re-render under the relaxed filters before
+  // searching for the row.
+  document.querySelectorAll('[data-status-filter]').forEach(function(cb){cb.checked=true;});
+  if(typeof lastCreds!=='undefined')renderCreds(lastCreds);
+  var rows=document.querySelectorAll('#creds-body tr[data-cred]');
+  var match=null;
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    if(email&&r.getAttribute('data-cred-username')===email){match=r;break;}
+    if(!match&&ip&&r.getAttribute('data-cred-ip')===ip)match=r;
+  }
+  if(match){
+    match.scrollIntoView({behavior:'smooth',block:'center'});
+    match.classList.remove('flash');
+    void match.offsetWidth;
+    match.classList.add('flash');
+  }
+}
+
+document.addEventListener('click',function(ev){
+  var t=ev.target.closest('.tev[data-clickable]');
+  if(!t)return;
+  gotoCredential(t.getAttribute('data-cred-email'),t.getAttribute('data-cred-ip'));
+});
+document.addEventListener('keydown',function(ev){
+  if(ev.key!=='Enter'&&ev.key!==' ')return;
+  var t=ev.target.closest&&ev.target.closest('.tev[data-clickable]');
+  if(!t)return;
+  ev.preventDefault();
+  gotoCredential(t.getAttribute('data-cred-email'),t.getAttribute('data-cred-ip'));
+});
+
+var lastCreds=[];
+function activeStatusFilters(){
+  var on={};
+  document.querySelectorAll('[data-status-filter]').forEach(function(cb){
+    if(cb.checked)on[cb.getAttribute('data-status-filter')]=true;
+  });
+  // If somehow none are checked, treat as "all on" so the user is
+  // never staring at an empty table without an obvious reason.
+  if(!Object.keys(on).length)return null;
+  return on;
+}
 function renderCreds(creds){
-  if(!creds.length){document.getElementById('creds-body').innerHTML='<tr><td colspan="8"><div class="empty"><div class="empty-ico" aria-hidden="true">&#x1F511;</div>No credentials captured yet</div></td></tr>';return;}
+  lastCreds=creds||[];
+  var filter=activeStatusFilters();
+  var visible=filter
+    ? lastCreds.filter(function(c){return filter[(c.status||'Visited').toLowerCase()];})
+    : lastCreds.slice();
+  var countEl=document.getElementById('cred-filter-count');
+  if(countEl){
+    if(filter&&visible.length!==lastCreds.length)countEl.textContent='Showing '+visible.length+' of '+lastCreds.length;
+    else countEl.textContent=lastCreds.length?'Showing all '+lastCreds.length:'';
+  }
+  if(!visible.length){
+    var msg=lastCreds.length
+      ? '<tr><td colspan="8"><div class="empty"><div class="empty-ico" aria-hidden="true">&#x1F50D;</div>'+lastCreds.length+' captures hidden by status filter</div></td></tr>'
+      : '<tr><td colspan="8"><div class="empty"><div class="empty-ico" aria-hidden="true">&#x1F511;</div>No credentials captured yet</div></td></tr>';
+    document.getElementById('creds-body').innerHTML=msg;
+    return;
+  }
   var rows='';
-  creds.forEach(function(c){
+  visible.forEach(function(c){
     var st=(c.status||'Visited').toLowerCase();
     var stLabel=c.status||'Visited';
     var cookieCount=c.cookie_count||0;
@@ -670,7 +756,7 @@ function renderCreds(creds){
       var lis=c.recommendations.map(function(r){return '<li>'+esc(r)+'</li>';}).join('');
       recsHtml='<div class="recpane"><div class="rec-meta">Session id <code>'+esc(c.session_id)+'</code> &middot; '+cookieCount+' cookie(s) captured &middot; UA: '+esc(c.user_agent||'').substring(0,100)+'</div><h4>Recommended Remediation</h4><ul>'+lis+'</ul></div>';
     }
-    rows+='<tr data-cred="'+c.id+'">'
+    rows+='<tr data-cred="'+c.id+'" data-cred-username="'+esc(c.username||'')+'" data-cred-ip="'+esc(c.remote_addr||'')+'">'
        +'<td><span class="cstat '+st+'">'+esc(stLabel)+'</span></td>'
        +'<td style="white-space:nowrap;color:var(--muted)">'+fmtFull(c.captured_at)+'</td>'
        +'<td><span class="ptag on">'+esc(c.phishlet)+'</span></td>'
@@ -687,6 +773,9 @@ function renderCreds(creds){
   });
   document.getElementById('creds-body').innerHTML=rows;
 }
+document.addEventListener('change',function(ev){
+  if(ev.target&&ev.target.matches&&ev.target.matches('[data-status-filter]'))renderCreds(lastCreds);
+});
 function toggleRec(id){
   var row=document.getElementById('rec-'+id);
   var btn=document.querySelector('tr[data-cred="'+id+'"] .expandbtn');
